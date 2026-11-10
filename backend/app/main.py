@@ -12,6 +12,7 @@ from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.collaboration import router as collaboration_router
 from app.api.deliveries import router as deliveries_router
+from app.api.drafts import router as drafts_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
 from app.api.modules import router as modules_router
@@ -62,6 +63,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(resources_router, prefix="/api")
     app.include_router(specs_router, prefix="/api")
     app.include_router(deliveries_router, prefix="/api")
+    app.include_router(drafts_router, prefix="/api")
     app.include_router(collaboration_router, prefix="/api")
 
     # 原生ASGI路由保留精确/mcp地址，SDK负责协议及自身生命周期。

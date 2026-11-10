@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.deliveries import AIParticipation
+
 
 class AgentDraftUpload(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -32,3 +34,25 @@ class AgentDraftInfo(BaseModel):
     handoff_note: str
     created_at: datetime
     status: Literal["pending_confirmation"] = "pending_confirmation"
+
+
+class AgentDraftView(AgentDraftInfo):
+    status: Literal["pending_confirmation", "confirmed"]
+    agent_name: str
+    download_url: str
+    delivery_id: UUID | None
+    confirmed_at: datetime | None
+
+
+class DraftConfirm(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ai_participation: AIParticipation
+    ai_note: str = Field(default="", max_length=2000)
+
+    @field_validator("ai_note")
+    @classmethod
+    def reject_null_character(cls, value: str) -> str:
+        if "\x00" in value:
+            raise ValueError("说明不能包含空字符")
+        return value

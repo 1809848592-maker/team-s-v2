@@ -66,6 +66,7 @@ def submit_delivery(
     *,
     storage: Storage,
     max_bytes: int,
+    commit: bool = True,
 ) -> DeliveryVersion:
     require_member(db, project_id, user_id)
     try:
@@ -136,7 +137,8 @@ def submit_delivery(
             "handoff_note": item.handoff_note,
         },
     )
-    db.commit()
+    if commit:
+        db.commit()
     return item
 
 

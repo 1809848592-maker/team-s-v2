@@ -2,7 +2,15 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, ForeignKey, String, func
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base
@@ -34,4 +42,25 @@ class AgentDraft(Base):
         return "pending_confirmation"
 
 
+class DraftConfirmation(Base):
+    __tablename__ = "draft_confirmations"
+    __table_args__ = (
+        UniqueConstraint("draft_id", name="uq_draft_confirmations_draft_id"),
+        UniqueConstraint("delivery_id", name="uq_draft_confirmations_delivery_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    draft_id: Mapped[UUID] = mapped_column(ForeignKey("agent_drafts.id", ondelete="RESTRICT"))
+    delivery_id: Mapped[UUID] = mapped_column(
+        ForeignKey("delivery_versions.id", ondelete="RESTRICT")
+    )
+    confirmed_by: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), index=True
+    )
+    confirmed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
 protect_snapshot(AgentDraft)
+protect_snapshot(DraftConfirmation)
