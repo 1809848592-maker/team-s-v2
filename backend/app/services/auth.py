@@ -5,6 +5,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.config import Settings
+from app.events import record_event
 from app.models import AuthSession, User
 from app.security import new_token, password_hash, token_hash, verify_password
 
@@ -58,6 +59,14 @@ def register(
         db.rollback()
         raise UsernameTakenError from error
     raw = _create_session(db, user, settings, previous_token)
+    record_event(
+        db,
+        actor_id=user.id,
+        event_type="user_registered",
+        object_type="user",
+        object_id=user.id,
+        details={"username": user.username},
+    )
     db.commit()
     return user, raw
 
@@ -74,6 +83,9 @@ def login(
     if not user or not valid:
         raise InvalidCredentialsError
     raw = _create_session(db, user, settings, previous_token)
+    record_event(
+        db, actor_id=user.id, event_type="user_logged_in", object_type="user", object_id=user.id
+    )
     db.commit()
     return user, raw
 
@@ -96,5 +108,17 @@ def current_user(db: Session, raw: str | None) -> User:
 
 def logout(db: Session, raw: str | None) -> None:
     if raw:
-        db.execute(delete(AuthSession).where(AuthSession.token_hash == token_hash(raw)))
-        db.commit()
+        user_id = db.scalar(
+            delete(AuthSession)
+            .where(AuthSession.token_hash == token_hash(raw))
+            .returning(AuthSession.user_id)
+        )
+        if user_id is not None:
+            record_event(
+                db,
+                actor_id=user_id,
+                event_type="user_logged_out",
+                object_type="user",
+                object_id=user_id,
+            )
+            db.commit()

@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.events import record_event
 from app.models import Invitation, Project, ProjectMember, User
 from app.security import new_token, token_hash
 
@@ -49,6 +50,15 @@ def create_project(db: Session, name: str, user_id: UUID) -> Project:
     db.add(project)
     db.flush()
     db.add(ProjectMember(project_id=project.id, user_id=user_id, role="leader"))
+    record_event(
+        db,
+        project_id=project.id,
+        actor_id=user_id,
+        event_type="project_created",
+        object_type="project",
+        object_id=project.id,
+        details={"name": project.name, "role": "leader"},
+    )
     db.commit()
     return project
 
@@ -88,6 +98,15 @@ def create_invitation(db: Session, project_id: UUID, user_id: UUID, role: Role) 
     db.add(
         Invitation(token_hash=token_hash(raw), project_id=project_id, role=role, created_by=user_id)
     )
+    record_event(
+        db,
+        project_id=project_id,
+        actor_id=user_id,
+        event_type="invitation_created",
+        object_type="invitation",
+        object_id=token_hash(raw),
+        details={"role": role},
+    )
     db.commit()
     return raw
 
@@ -119,5 +138,14 @@ def accept_invitation(db: Session, raw: str, user_id: UUID) -> tuple[Project, Pr
     project = db.get(Project, invitation.project_id)
     if project is None:
         raise ProjectNotFoundError
+    record_event(
+        db,
+        project_id=project.id,
+        actor_id=user_id,
+        event_type="member_joined",
+        object_type="project_member",
+        object_id=user_id,
+        details={"role": membership.role, "invited_by": str(invitation.created_by)},
+    )
     db.commit()
     return project, membership
