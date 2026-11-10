@@ -8,6 +8,7 @@ import SpecPanel from './SpecPanel.vue'
 import TaskPanel from './TaskPanel.vue'
 import RequestPanel from './RequestPanel.vue'
 import EventTimeline from './EventTimeline.vue'
+import AgentPanel from './AgentPanel.vue'
 const props = defineProps<{account:Account;busy:boolean;logoutError?:string}>()
 defineEmits<{logout:[]}>()
 const projects = ref<Project[]>([]), selected = ref(''), members = ref<Member[]>([]), modules = ref<Module[]>([])
@@ -16,8 +17,9 @@ const drafts = ref<DraftView[]>([])
 const error = ref(''), notice = ref(''), loading = ref(true), acting = ref(false), projectName = ref('')
 const inviteRole = ref<'member'|'leader'>('member'), inviteLink = ref(''), showMembers = ref(false), showNotifications = ref(false)
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') ?? '')
-const tabs = [{key:'board',label:'项目看板'},{key:'plan',label:'方案与分工'},{key:'spec',label:'规范与模板'},{key:'tasks',label:'任务与交付'},{key:'requests',label:'协作需求'},{key:'timeline',label:'时间线'}] as const
+const tabs = [{key:'board',label:'项目看板'},{key:'plan',label:'方案与分工'},{key:'spec',label:'规范与模板'},{key:'tasks',label:'任务与交付'},{key:'requests',label:'协作需求'},{key:'agents',label:'我的智能体'},{key:'timeline',label:'时间线'}] as const
 const tab = ref<string>('board')
+const agentPageVersion = ref(0)
 const preferredModule = ref('')
 const current = computed(()=>projects.value.find(p=>p.id===selected.value))
 const leader = computed(()=>current.value?.role==='leader')
@@ -35,7 +37,8 @@ function eventActor(event:ProjectEvent) {
   const agent = progress.value.map(item=>item.last_report).find(item=>item?.agent_id===event.actor_id) ?? drafts.value.find(item=>item.agent_id===event.actor_id) ?? requests.value.flatMap(item=>item.messages).find(item=>item.agent_id===event.actor_id)
   return `${agent?.agent_name || '智能体'} 代表 ${event.represented_user_id ? name(event.represented_user_id) : '所属人'}`
 }
-const activityLabels: Record<string,string> = {project_created:'创建项目',invitation_created:'创建邀请',member_joined:'加入项目',plan_published:'发布方案',module_updated:'更新分工',spec_published:'发布规范',template_uploaded:'上传模板',delivery_submitted:'提交交付',agent_draft_uploaded:'上传交付稿',agent_draft_confirmed:'确认交付稿',material_uploaded:'上传共享材料',progress_reported:'回报进度',request_created:'发起需求',request_accepted:'接手需求',request_responded:'回应需求',request_supplemented:'补充需求',request_resolved:'确认解决',notification_read:'阅读通知'}
+const activityLabels: Record<string,string> = {project_created:'创建项目',invitation_created:'创建邀请',member_joined:'加入项目',plan_published:'发布方案',module_updated:'更新分工',spec_published:'发布规范',template_uploaded:'上传模板',delivery_submitted:'提交交付',agent_registered:'登记智能体',agent_revoked:'吊销智能体令牌',agent_draft_uploaded:'上传交付稿',agent_draft_confirmed:'确认交付稿',material_uploaded:'上传共享材料',progress_reported:'回报进度',request_created:'发起需求',request_accepted:'接手需求',request_responded:'回应需求',request_supplemented:'补充需求',request_resolved:'确认解决',notification_read:'阅读通知'}
+function refreshProject() { ++agentPageVersion.value; void loadProject() }
 async function loadProject() {
   const pid = selected.value, accountId = props.account.id, sequence = ++serial
   if(!pid) { loading.value = false; return }
@@ -58,6 +61,7 @@ async function loadProject() {
   finally { if(mounted && accountId===props.account.id && pid===selected.value && sequence===serial) loading.value = false }
 }
 async function loadProjects(preferred?:string) {
+  ++agentPageVersion.value
   const accountId = props.account.id
   try {
     const nextProjects = await api<Project[]>('/api/projects')
@@ -114,7 +118,7 @@ onBeforeUnmount(()=>{mounted=false;++serial})
       <section v-if="inviteToken" class="invitation-banner"><div><strong>你收到了一份项目邀请</strong><p>以 {{account.username}} 的身份加入受邀项目。</p></div><button class="btn primary" :disabled="acting" @click="acceptInvite">接受邀请并加入</button></section>
       <p v-if="error" class="error status-banner" role="alert">{{error}} <button class="btn quiet" :disabled="loading" @click="loadProjects()">重新加载</button></p><p v-if="notice" class="notice" role="status">{{notice}}</p>
       <template v-if="current">
-        <div class="project-heading"><div><p class="eyebrow">{{leader?'项目负责人':'项目成员'}}</p><h1>{{current.name}}</h1></div><div class="toolbar"><button class="btn quiet" :disabled="loading" @click="loadProject">刷新</button><button class="btn" :aria-expanded="showMembers" @click="showMembers=!showMembers">成员与邀请 · {{members.length}}</button><button class="btn" :aria-expanded="showNotifications" @click="showNotifications=!showNotifications">站内通知{{unread.length?` · ${unread.length} 未读`:''}}</button></div></div>
+        <div class="project-heading"><div><p class="eyebrow">{{leader?'项目负责人':'项目成员'}}</p><h1>{{current.name}}</h1></div><div class="toolbar"><button class="btn quiet" :disabled="loading" @click="refreshProject">刷新</button><button class="btn" :aria-expanded="showMembers" @click="showMembers=!showMembers">成员与邀请 · {{members.length}}</button><button class="btn" :aria-expanded="showNotifications" @click="showNotifications=!showNotifications">站内通知{{unread.length?` · ${unread.length} 未读`:''}}</button></div></div>
         <section v-if="showMembers" class="panel members-panel" aria-labelledby="members-title"><div class="panel-heading"><h2 id="members-title">项目成员</h2><button class="btn quiet" @click="showMembers=false">收起成员</button></div><ul class="member-list"><li v-for="member in members" :key="member.user_id"><span>{{member.username}}</span><span class="tag">{{member.role==='leader'?'负责人':'组员'}}</span></li></ul><form v-if="leader" class="toolbar invite-form" @submit.prevent="createInvite"><div class="field"><label for="invite-role">邀请角色</label><select id="invite-role" v-model="inviteRole"><option value="member">组员</option><option value="leader">负责人</option></select></div><button class="btn primary" :disabled="acting">生成一次性邀请</button></form><div v-if="inviteLink" class="field invite-result"><label for="invite-link">邀请链接（单次使用）</label><input id="invite-link" :value="inviteLink" readonly @focus="($event.target as HTMLInputElement).select()"><span class="muted">复制链接后发送给受邀成员。每邀请一人生成一个新链接。</span></div></section>
         <section v-if="showNotifications" class="panel" aria-labelledby="notifications-title"><div class="panel-heading"><h2 id="notifications-title">站内通知</h2><button class="btn quiet" @click="showNotifications=false">收起通知</button></div><p v-if="!notifications.length" class="empty">暂时没有通知。</p><ul class="notification-list"><li v-for="notification in notifications" :key="notification.id" :class="{unread:!notification.read_at}"><div><p>{{notification.message}}</p><time>{{dateText(notification.created_at)}}</time></div><button v-if="!notification.read_at" class="btn quiet" :disabled="acting" @click="readNotification(notification)">标为已读</button><span v-else class="muted">已读</span></li></ul></section>
         <p v-if="loading" class="muted" role="status">正在同步项目记录…</p>
@@ -128,6 +132,7 @@ onBeforeUnmount(()=>{mounted=false;++serial})
         <SpecPanel v-if="tab==='spec'" :key="selected" :project-id="selected" :leader="leader" @changed="loadProject"/>
         <TaskPanel v-if="tab==='tasks'" :initial-module-id="preferredModule" :key="selected" :project-id="selected" :members="members" :account-id="account.id" @changed="loadProject"/>
         <RequestPanel v-if="tab==='requests'" :key="selected" :project-id="selected" :members="members" :account-id="account.id" @changed="loadProject"/>
+        <AgentPanel v-if="tab==='agents'" :key="`${selected}:${agentPageVersion}`" :project-id="selected" :account-id="account.id" @changed="loadProject"/>
         <EventTimeline v-if="tab==='timeline'" :key="selected" :project-id="selected" :members="members" :modules="modules" :deliveries="deliveries" :leader="leader"/>
       </template>
       <section v-else-if="!loading" class="panel welcome-panel"><p class="eyebrow">你的协作空间</p><h1>开始一个研究项目。</h1><p>从左侧创建项目，或使用负责人发来的邀请链接加入团队。</p></section>

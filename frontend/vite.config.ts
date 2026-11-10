@@ -11,6 +11,10 @@ export default defineConfig({
         target: process.env.API_PROXY_TARGET || 'http://127.0.0.1:8000',
         changeOrigin: false,
       },
+      '/mcp': {
+        target: process.env.API_PROXY_TARGET || 'http://127.0.0.1:8000',
+        changeOrigin: false,
+      },
     },
   },
 })

@@ -16,3 +16,5 @@ export interface RequestMessage {id:string;request_id:string;author_id:string;ki
 export interface CollaborationRequest {id:string;project_id:string;created_by:string;title:string;content:string;target_user_id:string|null;target_module_id:string|null;expected_by:string|null;status:'open'|'accepted'|'responded'|'resolved';accepted_by:string|null;created_at:string;accepted_at:string|null;responded_at:string|null;resolved_at:string|null;messages:RequestMessage[]}
 export interface Notification {id:string;project_id:string;user_id:string;kind:string;message:string;details:Record<string,unknown>;created_at:string;read_at:string|null}
 export interface ProjectEvent {id:number;occurred_at:string;project_id:string|null;actor_type:'human'|'agent';actor_id:string;represented_user_id:string|null;event_type:string;object_type:string;object_id:string;details:Record<string,unknown>;plan_version_id:string|null;spec_version_id:string|null;task_id:string|null}
+export interface AgentInfo {id:string;project_id:string;owner_id:string;name:string;client_type:string;created_at:string;revoked_at:string|null}
+export interface AgentCreated {agent:AgentInfo;token:string}
