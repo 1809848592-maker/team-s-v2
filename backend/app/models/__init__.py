@@ -1,5 +1,6 @@
 from app.models.auth import AuthSession, User
 from app.models.base import Base
+from app.models.collaboration import CollaborationRequest, ProgressReport, RequestMessage
 from app.models.delivery import DeliveryVersion, SharedMaterial
 from app.models.event import Event
 from app.models.module import Module
@@ -12,6 +13,7 @@ from app.models.spec import SpecVersion
 __all__ = [
     "AuthSession",
     "Base",
+    "CollaborationRequest",
     "DeliveryVersion",
     "Event",
     "Invitation",
@@ -20,6 +22,8 @@ __all__ = [
     "PlanVersion",
     "Project",
     "ProjectMember",
+    "ProgressReport",
+    "RequestMessage",
     "Resource",
     "SharedMaterial",
     "SpecVersion",

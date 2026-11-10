@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -61,6 +62,28 @@ def notify_spec_change(db: Session, spec: SpecVersion) -> None:
                 kind="spec_updated",
                 message=f"团队规范已发布第 {spec.version} 版",
                 details={"spec_version_id": str(spec.id), "version": spec.version},
+                created_at=datetime.now(UTC),
+            )
+        )
+
+
+def notify_request_change(
+    db: Session,
+    *,
+    project_id: UUID,
+    request_id: UUID,
+    kind: str,
+    recipient_ids: Iterable[UUID],
+    message: str,
+) -> None:
+    for user_id in sorted(set(recipient_ids), key=str):
+        db.add(
+            Notification(
+                project_id=project_id,
+                user_id=user_id,
+                kind=kind,
+                message=message,
+                details={"request_id": str(request_id)},
                 created_at=datetime.now(UTC),
             )
         )

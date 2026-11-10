@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.auth import router as auth_router
+from app.api.collaboration import router as collaboration_router
 from app.api.deliveries import router as deliveries_router
 from app.api.events import router as events_router
 from app.api.health import router as health_router
@@ -37,6 +38,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(resources_router, prefix="/api")
     app.include_router(specs_router, prefix="/api")
     app.include_router(deliveries_router, prefix="/api")
+    app.include_router(collaboration_router, prefix="/api")
 
     if settings.static_dir.is_dir():
         app.mount("/", StaticFiles(directory=settings.static_dir, html=True), name="frontend")
