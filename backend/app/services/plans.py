@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.events import record_event
 from app.models import PlanVersion, Project
 from app.schemas.plans import PlanPublish
+from app.services import modules, notifications
 from app.services.projects import ProjectNotFoundError, require_member
 
 
@@ -62,7 +63,8 @@ def publish_plan(
     if project is None:
         raise ProjectNotFoundError
     previous = get_latest_plan(db, project_id)
-    # 后续分工模块的校验可在此锁内、创建快照前接入。
+    modules.validate_modules(db, project_id, publication.content.modules)
+    affected = modules.affected_modules(previous, publication.content)
     item = PlanVersion(
         project_id=project_id,
         version=previous.version + 1 if previous is not None else 1,
@@ -83,5 +85,19 @@ def publish_plan(
         plan_version_id=item.id,
         details={"version": item.version, "change_note": item.change_note},
     )
+    notifications.notify_plan_change(db, item, affected)
+    for old, new in affected:
+        module = new if new is not None else old
+        record_event(
+            db,
+            project_id=project_id,
+            actor_id=user_id,
+            event_type="module_updated",
+            object_type="module",
+            object_id=module.id,
+            task_id=module.id,
+            plan_version_id=item.id,
+            details={"version": item.version, "removed": new is None},
+        )
     db.commit()
     return item

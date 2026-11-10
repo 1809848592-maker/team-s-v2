@@ -9,7 +9,7 @@ from app.api.projects import project_error
 from app.db import get_session
 from app.models import PlanVersion, User
 from app.schemas.plans import PlanPublish, PlanVersionInfo
-from app.services import plans, projects
+from app.services import modules, plans, projects
 
 router = APIRouter(prefix="/projects/{project_id}/plan", tags=["plans"])
 Database = Annotated[Session, Depends(get_session)]
@@ -71,6 +71,8 @@ def publish_plan(
 ) -> PlanVersion:
     try:
         item = plans.publish_plan(db, project_id, user.id, body)
+    except modules.ModuleValidationError as error:
+        raise HTTPException(422, str(error)) from None
     except projects.ProjectError as error:
         raise plan_error(error) from None
     response.headers["Cache-Control"] = "no-store"

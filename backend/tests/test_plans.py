@@ -31,6 +31,7 @@ def publication(change_note="发布整体研究方案"):
                 {"variable": "交接次数", "source": "项目事件日志", "processing": "按任务统计"},
                 {"variable": "退回轮次", "source": "审核记录", "processing": "按交付统计"},
             ],
+            "modules": [],
         },
     }
 
@@ -280,4 +281,5 @@ def test_plan_validation_rejects_invalid_structures_and_keeps_version_sequence(a
         "deadline": None,
         "terms": [],
         "data_definitions": [],
+        "modules": [],
     }
