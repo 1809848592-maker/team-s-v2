@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     platform_admin_user_ids: str = ""
     storage_dir: Path = Path(__file__).resolve().parents[2] / ".storage"
     upload_max_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
+    mcp_allowed_hosts: str = "127.0.0.1:*,localhost:*,[::1]:*"
+    mcp_allowed_origins: str = "http://127.0.0.1:*,http://localhost:*,http://[::1]:*"
 
     @field_validator("platform_admin_user_ids")
     @classmethod

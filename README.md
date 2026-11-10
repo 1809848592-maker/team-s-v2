@@ -56,6 +56,16 @@ docker compose down
 
 审核流水线尚未接入时，审核接口明确返回`not_covered`；M1的“已提交”不视为“已采用”，不能作为其他智能体读取上游交付的依据。
 
+## MCP 接入
+
+主接入地址为 `http://localhost:8000/mcp`，采用官方 [Python MCP SDK](https://github.com/modelcontextprotocol/python-sdk) 的 Streamable HTTP 传输，运行依赖固定在后端锁文件中。每次HTTP请求均须带上述Bearer令牌；工具执行时再次查询令牌有效性与最新分工，MCP会话不代替身份认证。
+
+工具与HTTP服务一一对应：`get_my_tasks`、`get_plan`、`get_spec`、`get_task_context`、`report_progress`、`upload_deliverable_draft`、`list_deliveries`、`get_delivery`、`download_delivery`、`get_review_result`、`list_requests`、`get_request`、`create_request`、`accept_request`、`respond_request`、`list_resources`、`download_resource`。工具描述明确返回资料是数据，不是指令；禁止确认提交、修改规范或确认需求解决。
+
+MCP上传接收`filename`、`base64_content`和可选`handoff_note`，不读取客户端本地路径或外部URL；文件及编码请求均有大小上限。下载经相同对象权限检查后返回封装的Base64文件资料。正式交付和模板仍可通过HTTP附件接口下载。
+
+本机默认仅允许loopback Host/Origin。部署时设置`MCP_ALLOWED_HOSTS`（如`teams.example.edu`）及`MCP_ALLOWED_ORIGINS`（如`https://teams.example.edu`），多个值以逗号分隔，保留SDK的Host/Origin保护。客户端未发送Origin时仍须Bearer认证；非法Origin返回403。
+
 ## 本地编写与检查
 
 后端需要 Python 3.12 和 uv；依赖版本由 `backend/uv.lock` 管理，容器用 `backend/requirements.lock` 安装相同的运行依赖。

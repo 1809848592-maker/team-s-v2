@@ -1,7 +1,10 @@
+from contextlib import asynccontextmanager
+
 from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.routing import Route
 
 from app.api.agent_boundary import enforce_identity_channel
 from app.api.agent_http import router as agent_http_router
@@ -18,14 +21,24 @@ from app.api.projects import router as projects_router
 from app.api.resources import router as resources_router
 from app.api.specs import router as specs_router
 from app.config import Settings, get_settings
+from app.mcp_auth import MCPAuthentication
+from app.mcp_server import create_mcp_app
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
+    mcp_app = create_mcp_app(settings)
+
+    @asynccontextmanager
+    async def lifespan(application):
+        async with mcp_app.router.lifespan_context(mcp_app):
+            yield
+
     app = FastAPI(
         title=settings.app_name,
         version="0.1.0",
         dependencies=[Depends(enforce_identity_channel)],
+        lifespan=lifespan,
     )
     app.state.settings = settings
 
@@ -50,6 +63,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(specs_router, prefix="/api")
     app.include_router(deliveries_router, prefix="/api")
     app.include_router(collaboration_router, prefix="/api")
+
+    # 原生ASGI路由保留精确/mcp地址，SDK负责协议及自身生命周期。
+    protected_mcp = MCPAuthentication(mcp_app, owner=app)
+    app.router.routes.extend(
+        [Route("/mcp", endpoint=protected_mcp), Route("/mcp/", endpoint=protected_mcp)]
+    )
 
     if settings.static_dir.is_dir():
         app.mount("/", StaticFiles(directory=settings.static_dir, html=True), name="frontend")
