@@ -11,6 +11,10 @@ x-backend: &backend
     SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-1209600}
     SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
     PLATFORM_ADMIN_USER_IDS: ${PLATFORM_ADMIN_USER_IDS:-}
+    STORAGE_DIR: /app/storage
+    UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-104857600}
+  volumes:
+    - files_dev_data:/app/storage
   init: true
 
 services:
@@ -51,3 +55,4 @@ services:
 
 volumes:
   postgres_dev_data:
+  files_dev_data:

@@ -10,6 +10,8 @@ from app.api.modules import router as modules_router
 from app.api.notifications import router as notifications_router
 from app.api.plans import router as plans_router
 from app.api.projects import router as projects_router
+from app.api.resources import router as resources_router
+from app.api.specs import router as specs_router
 from app.config import Settings, get_settings
 
 
@@ -31,6 +33,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(plans_router, prefix="/api")
     app.include_router(modules_router, prefix="/api")
     app.include_router(notifications_router, prefix="/api")
+    app.include_router(resources_router, prefix="/api")
+    app.include_router(specs_router, prefix="/api")
 
     if settings.static_dir.is_dir():
         app.mount("/", StaticFiles(directory=settings.static_dir, html=True), name="frontend")

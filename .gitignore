@@ -4,6 +4,7 @@
 .venv/
 .tools/
 .verification/
+.storage/
 __pycache__/
 *.py[cod]
 .pytest_cache/

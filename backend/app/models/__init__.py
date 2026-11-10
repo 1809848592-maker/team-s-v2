@@ -5,6 +5,8 @@ from app.models.module import Module
 from app.models.notification import Notification
 from app.models.plan import PlanVersion
 from app.models.project import Invitation, Project, ProjectMember
+from app.models.resource import Resource
+from app.models.spec import SpecVersion
 
 __all__ = [
     "AuthSession",
@@ -16,5 +18,7 @@ __all__ = [
     "PlanVersion",
     "Project",
     "ProjectMember",
+    "Resource",
+    "SpecVersion",
     "User",
 ]

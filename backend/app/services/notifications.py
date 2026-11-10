@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.events import record_event
-from app.models import Notification, PlanVersion
+from app.models import Notification, PlanVersion, ProjectMember, SpecVersion
 from app.schemas.plans import ModuleContent
 
 
@@ -50,6 +50,22 @@ def list_notifications(
     return list(db.scalars(query.order_by(Notification.created_at.desc(), Notification.id.desc())))
 
 
+def notify_spec_change(db: Session, spec: SpecVersion) -> None:
+    for user_id in db.scalars(
+        select(ProjectMember.user_id).where(ProjectMember.project_id == spec.project_id)
+    ):
+        db.add(
+            Notification(
+                project_id=spec.project_id,
+                user_id=user_id,
+                kind="spec_updated",
+                message=f"团队规范已发布第 {spec.version} 版",
+                details={"spec_version_id": str(spec.id), "version": spec.version},
+                created_at=datetime.now(UTC),
+            )
+        )
+
+
 def read_notification(db: Session, notification_id: UUID, user_id: UUID) -> Notification:
     item = db.scalar(
         select(Notification)
@@ -60,6 +76,8 @@ def read_notification(db: Session, notification_id: UUID, user_id: UUID) -> Noti
         raise NotificationNotFoundError
     if item.read_at is None:
         item.read_at = datetime.now(UTC)
+        plan_version_id = item.details.get("plan_version_id")
+        spec_version_id = item.details.get("spec_version_id")
         record_event(
             db,
             project_id=item.project_id,
@@ -67,7 +85,8 @@ def read_notification(db: Session, notification_id: UUID, user_id: UUID) -> Noti
             event_type="notification_read",
             object_type="notification",
             object_id=item.id,
-            plan_version_id=UUID(item.details["plan_version_id"]),
+            plan_version_id=UUID(plan_version_id) if plan_version_id else None,
+            spec_version_id=UUID(spec_version_id) if spec_version_id else None,
             details={"kind": item.kind},
         )
         db.commit()

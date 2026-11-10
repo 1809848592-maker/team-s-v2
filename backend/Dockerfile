@@ -12,7 +12,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app/backend
 COPY backend/requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
-    && useradd --create-home --uid 10001 teams
+    && useradd --create-home --uid 10001 teams \
+    && mkdir /app/storage && chown teams:teams /app/storage
 COPY backend/app ./app
 COPY backend/alembic ./alembic
 COPY backend/alembic.ini ./

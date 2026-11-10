@@ -50,6 +50,7 @@ def auth_environment(tmp_path) -> Iterator[AuthEnvironment]:
                     "session_ttl_seconds": 3600,
                     "session_cookie_secure": False,
                     "platform_admin_user_ids": "",
+                    "storage_dir": tmp_path / "storage",
                 }
                 values.update(overrides)
                 app = create_app(Settings(_env_file=None, **values))

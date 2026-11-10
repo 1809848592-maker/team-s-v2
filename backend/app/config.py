@@ -16,6 +16,8 @@ class Settings(BaseSettings):
     session_ttl_seconds: int = Field(default=14 * 24 * 3600, gt=0)
     session_cookie_secure: bool = False
     platform_admin_user_ids: str = ""
+    storage_dir: Path = Path(__file__).resolve().parents[2] / ".storage"
+    upload_max_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
 
     @field_validator("platform_admin_user_ids")
     @classmethod
