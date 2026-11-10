@@ -168,9 +168,10 @@ def test_agent_management_is_scoped_by_session_project_and_owner(auth_environmen
     assert team.member.get(agent_path(str(uuid4()))).status_code == 404
 
     anonymous = auth_environment.make_client()
-    for auth_headers in ({}, bearer(created["token"])):
+    for auth_headers, expected_status in (({}, 401), (bearer(created["token"]), 403)):
         assert (
-            anonymous.get(agent_path(team.project["id"]), headers=auth_headers).status_code == 401
+            anonymous.get(agent_path(team.project["id"]), headers=auth_headers).status_code
+            == expected_status
         )
         assert (
             anonymous.post(
@@ -178,14 +179,14 @@ def test_agent_management_is_scoped_by_session_project_and_owner(auth_environmen
                 json={"name": "不应登记", "client_type": "Codex"},
                 headers={**CSRF_HEADERS, **auth_headers},
             ).status_code
-            == 401
+            == expected_status
         )
         assert (
             anonymous.post(
                 agent_path(team.project["id"], agent_id),
                 headers={**CSRF_HEADERS, **auth_headers},
             ).status_code
-            == 401
+            == expected_status
         )
     assert anonymous.get("/api/agent/me", headers=bearer(created["token"])).status_code == 200
 

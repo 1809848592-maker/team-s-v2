@@ -1,8 +1,9 @@
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.agent_boundary import enforce_identity_channel
 from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.collaboration import router as collaboration_router
@@ -20,7 +21,11 @@ from app.config import Settings, get_settings
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
-    app = FastAPI(title=settings.app_name, version="0.1.0")
+    app = FastAPI(
+        title=settings.app_name,
+        version="0.1.0",
+        dependencies=[Depends(enforce_identity_channel)],
+    )
     app.state.settings = settings
 
     @app.exception_handler(RequestValidationError)
