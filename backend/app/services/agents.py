@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.events import record_event
 from app.models.agent import Agent
-from app.models.project import ProjectMember
+from app.models.project import Project, ProjectMember
 from app.schemas.agents import AgentCreate
 from app.security import new_token, token_hash
 from app.services.projects import require_member
@@ -75,6 +75,8 @@ def list_agents(db: Session, project_id: UUID, user_id: UUID) -> list[Agent]:
 
 def revoke_agent(db: Session, project_id: UUID, agent_id: UUID, user_id: UUID) -> Agent:
     require_member(db, project_id, user_id)
+    # 智能体写操作按项目→智能体顺序持锁；吊销沿用该顺序，避免与调用审计外键形成锁环。
+    db.scalar(select(Project.id).where(Project.id == project_id).with_for_update())
     item = db.scalar(
         select(Agent)
         .where(Agent.id == agent_id, Agent.project_id == project_id, Agent.owner_id == user_id)

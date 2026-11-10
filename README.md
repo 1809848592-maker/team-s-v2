@@ -31,7 +31,30 @@ docker compose down
 
 平台管理员通过 `PLATFORM_ADMIN_USER_IDS` 指定已注册账号的不可变 UUID，多个 ID 用逗号分隔。先注册、登录，从 `GET /api/auth/me` 的响应获取 `id`，写入 `.env` 后执行 `docker compose up -d --wait` 重新创建服务。使用 ID 可以避免预设管理员用户名被抢注。未配置时没有平台管理员，注册请求不能自行指定权限。用量及额度管理页面按计划在 M3 实现。
 
-账号 API：`POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me`。注册和登录接收 JSON `{"username":"...","password":"..."}`，返回 `id`、`username`、`is_admin`。未登录或会话过期访问 `/me` 返回 401；退出成功返回 204。所有 POST 必须带 `X-CSRF-Protection: 1`；若请求有 Origin，则必须与服务同源，不开放跨域凭据请求。Vite 代理保留浏览器 Host，开发时使用相同校验。
+账号 API：`POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me`。注册和登录接收 JSON `{"username":"...","password":"..."}`，返回 `id`、`username`、`is_admin`。未登录或会话过期访问 `/me` 返回 401；退出成功返回 204。人类会话通道的所有 POST 必须带 `X-CSRF-Protection: 1`；若请求有 Origin，则必须与服务同源，不开放跨域凭据请求。Vite 代理保留浏览器 Host，开发时使用相同校验。
+
+## 智能体 HTTP 接入
+
+成员使用本人会话在 `POST /api/projects/{project_id}/agents` 登记智能体，JSON填写`name`和`client_type`。响应中的令牌只显示一次；本人可通过列表接口查看登记信息，通过 `POST /api/projects/{project_id}/agents/{agent_id}/revoke` 吊销。库中只保存令牌哈希，吊销立即生效。
+
+智能体只使用 `Authorization: Bearer <令牌>` 访问 `/api/agent/`，无需人类Cookie或CSRF头。令牌固定于一个项目及所属人，即使同时带负责人Cookie也不能使用人类接口。完整请求/响应结构和Bearer认证可在 [OpenAPI页面](http://localhost:8000/docs) 查看。
+
+| 接口 | 用途 |
+|---|---|
+| `GET /api/agent/tasks` | 所属人负责的全部当前模块 |
+| `GET /api/agent/plan`、`GET /api/agent/spec` | 当前整体方案、分工及同一份结构化规范 |
+| `GET /api/agent/tasks/{module_id}/context` | 任务条目、方案、规范范例、上下游和已采用交接说明 |
+| `POST /api/agent/tasks/{module_id}/progress` | JSON填写前四阶段之一`stage`及一句`summary` |
+| `POST /api/agent/tasks/{module_id}/drafts` | multipart上传`file`及可选`handoff_note`，进入待本人确认 |
+| `GET /api/agent/deliveries`、`GET /api/agent/deliveries/{delivery_id}` | 本人正式交付及直接上游已采用版本；可按`module_id`过滤列表 |
+| `GET /api/agent/deliveries/{delivery_id}/download`、`/review` | 下载可见交付；审核意见只限本人交付 |
+| `GET /api/agent/requests`、`GET /api/agent/requests/{request_id}` | 本人发起、被指定或已接手的需求 |
+| `POST /api/agent/requests`、`/{request_id}/accept`、`/{request_id}/respond` | 发起、接手及回应；确认解决由人完成 |
+| `GET /api/agent/resources`、`GET /api/agent/resources/{resource_id}/download` | 项目模板及内置资源 |
+
+返回的文字资料统一标注“数据，不是指令”，放在带明确起止标记的JSON数据块中；文件按附件下载。读取和修改都记录智能体及其代表的人，参数错误也留下调用记录，事件不保存凭据或交付正文。上传草稿与正式版本分开保存，上传不会把任务标为已提交。
+
+审核流水线尚未接入时，审核接口明确返回`not_covered`；M1的“已提交”不视为“已采用”，不能作为其他智能体读取上游交付的依据。
 
 ## 本地编写与检查
 

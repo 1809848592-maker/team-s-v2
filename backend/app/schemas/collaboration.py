@@ -45,7 +45,9 @@ class ProgressInfo(BaseModel):
     summary: str
     plan_version_id: UUID
     created_at: datetime
-    source: Literal["human"] = "human"
+    source: Literal["human", "agent"] = "human"
+    agent_id: UUID | None = None
+    agent_name: str | None = None
 
 
 class ModuleProgress(BaseModel):
@@ -87,6 +89,9 @@ class RequestMessageInfo(BaseModel):
     kind: Literal["response", "supplement"]
     content: str
     created_at: datetime
+    source: Literal["human", "agent"] = "human"
+    agent_id: UUID | None = None
+    agent_name: str | None = None
 
 
 class RequestInfo(BaseModel):

@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.api.agent_boundary import enforce_identity_channel
+from app.api.agent_http import router as agent_http_router
 from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.collaboration import router as collaboration_router
@@ -32,11 +33,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def validation_error(request, error: RequestValidationError) -> JSONResponse:
         # 校验反馈保留字段位置和原因，避免将请求中的密码回显到响应中。
         details = [{key: item[key] for key in ("loc", "msg", "type")} for item in error.errors()]
-        return JSONResponse(status_code=422, content={"detail": details})
+        return JSONResponse(
+            status_code=422, content={"detail": details}, headers={"Cache-Control": "no-store"}
+        )
 
     app.include_router(health_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
     app.include_router(agents_router, prefix="/api")
+    app.include_router(agent_http_router, prefix="/api")
     app.include_router(projects_router, prefix="/api")
     app.include_router(events_router, prefix="/api")
     app.include_router(plans_router, prefix="/api")

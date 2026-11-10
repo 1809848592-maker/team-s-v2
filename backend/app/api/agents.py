@@ -33,6 +33,7 @@ def agent_error(error: Exception) -> HTTPException:
 
 def require_agent(request: Request, db: Database, bearer: BearerCredentials) -> Agent:
     # 独立 Bearer 身份通道；人类会话 Cookie 不参与智能体身份认证。
+    request.state.agent_session = db
     try:
         return agents.authenticate_agent(db, bearer.credentials if bearer else None)
     except agents.AgentUnauthenticatedError:

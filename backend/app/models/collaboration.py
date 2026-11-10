@@ -1,9 +1,11 @@
 from datetime import datetime
+from typing import Literal
 from uuid import UUID, uuid4
 
 from sqlalchemy import CheckConstraint, DateTime, ForeignKey, String, func
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.models.agent import Agent
 from app.models.base import Base
 from app.models.immutable import protect_snapshot
 
@@ -25,12 +27,24 @@ class ProgressReport(Base):
         ForeignKey("modules.id", ondelete="RESTRICT"), index=True
     )
     user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    agent_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agents.id", ondelete="RESTRICT"), index=True
+    )
+    agent: Mapped[Agent | None] = relationship(lazy="joined")
     stage: Mapped[str] = mapped_column(String(20))
     summary: Mapped[str] = mapped_column(String(1000))
     plan_version_id: Mapped[UUID] = mapped_column(
         ForeignKey("plan_versions.id", ondelete="RESTRICT")
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def source(self) -> Literal["human", "agent"]:
+        return "agent" if self.agent_id is not None else "human"
+
+    @property
+    def agent_name(self) -> str | None:
+        return self.agent.name if self.agent is not None else None
 
 
 class CollaborationRequest(Base):
@@ -78,9 +92,21 @@ class RequestMessage(Base):
         ForeignKey("collaboration_requests.id", ondelete="RESTRICT"), index=True
     )
     author_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    agent_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("agents.id", ondelete="RESTRICT"), index=True
+    )
+    agent: Mapped[Agent | None] = relationship(lazy="joined")
     kind: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(String(10000))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    @property
+    def source(self) -> Literal["human", "agent"]:
+        return "agent" if self.agent_id is not None else "human"
+
+    @property
+    def agent_name(self) -> str | None:
+        return self.agent.name if self.agent is not None else None
 
 
 protect_snapshot(ProgressReport)

@@ -2,10 +2,11 @@ from datetime import UTC, datetime
 from uuid import UUID
 
 from pydantic import BaseModel, ValidationError
-from sqlalchemy import select
+from sqlalchemy import inspect, select
 from sqlalchemy.orm import Session
 
 from app.events import record_event
+from app.models.agent import Agent
 from app.models.collaboration import CollaborationRequest, ProgressReport, RequestMessage
 from app.models.delivery import DeliveryVersion
 from app.models.module import Module
@@ -20,7 +21,7 @@ from app.schemas.collaboration import (
     RequestMessageInfo,
 )
 from app.schemas.plans import ModuleContent, PlanContent
-from app.services import notifications
+from app.services import agent_permissions, notifications
 from app.services.modules import get_current_module
 from app.services.plans import get_latest_plan
 from app.services.projects import ProjectNotFoundError, require_member
@@ -54,6 +55,53 @@ def _lock_project(db: Session, project_id: UUID) -> None:
         raise ProjectNotFoundError
 
 
+def _authorize_agent(
+    db: Session,
+    agent: Agent,
+    action: str,
+    project_id: UUID,
+    user_id: UUID,
+    *,
+    module_id: UUID | None = None,
+    request_id: UUID | None = None,
+    lock: bool = False,
+) -> UUID:
+    context = {"project_id": project_id, "module_id": module_id, "request_id": request_id}
+    with db.no_autoflush:
+        agent_permissions.authorize(db, agent, action, **context)
+        identity = inspect(agent).identity
+        agent_id = identity[0] if identity is not None else agent.id
+        query = select(Agent).where(Agent.id == agent_id)
+        if lock:
+            # 写入结束前保持令牌有效性，吊销会等待本次已授权事务结束。
+            query = query.with_for_update(read=True)
+        principal = db.scalar(query.execution_options(populate_existing=True))
+        if principal is None:
+            agent_permissions.deny(db, agent, action, "agent_inactive", **context)
+        if lock:
+            agent_permissions.authorize(db, agent, action, **context)
+        if principal.owner_id != user_id:
+            agent_permissions.deny(db, agent, action, "owner_scope", **context)
+        return principal.id
+
+
+def _actor(user_id: UUID, agent: Agent | None) -> dict:
+    if agent is None:
+        return {"actor_id": user_id}
+    return {
+        "actor_id": _agent_id(agent),
+        "actor_type": "agent",
+        "represented_user_id": user_id,
+    }
+
+
+def _agent_id(agent: Agent | None) -> UUID | None:
+    if agent is None:
+        return None
+    identity = inspect(agent).identity
+    return identity[0] if identity is not None else agent.id
+
+
 def _current_module(db: Session, project_id: UUID, module_id: UUID) -> ModuleContent:
     plan = get_latest_plan(db, project_id)
     module = (
@@ -79,10 +127,18 @@ def report_progress(
     module_id: UUID,
     user_id: UUID,
     body: ProgressCreate | dict,
+    *,
+    agent: Agent | None = None,
 ) -> ProgressReport:
+    if agent is not None:
+        _authorize_agent(db, agent, "report_progress", project_id, user_id, module_id=module_id)
     require_member(db, project_id, user_id)
     body = _validated(ProgressCreate, body)
     _lock_project(db, project_id)
+    if agent is not None:
+        _authorize_agent(
+            db, agent, "report_progress", project_id, user_id, module_id=module_id, lock=True
+        )
     module = _current_module(db, project_id, module_id)
     if user_id not in module.assignee_ids:
         raise CollaborationPermissionError("只有该模块的负责人可以回报进度")
@@ -91,6 +147,7 @@ def report_progress(
         project_id=project_id,
         module_id=module_id,
         user_id=user_id,
+        agent_id=_agent_id(agent),
         stage=body.stage,
         summary=body.summary,
         plan_version_id=plan.id,
@@ -101,13 +158,13 @@ def report_progress(
     record_event(
         db,
         project_id=project_id,
-        actor_id=user_id,
+        **_actor(user_id, agent),
         event_type="progress_reported",
         object_type="progress_report",
         object_id=item.id,
         task_id=module_id,
         plan_version_id=plan.id,
-        details={"stage": item.stage, "summary": item.summary, "source": "human"},
+        details={"stage": item.stage, "summary": item.summary, "source": item.source},
     )
     db.commit()
     return item
@@ -241,6 +298,7 @@ def _finish_request_change(
     *,
     recipients: set[UUID] | None = None,
     details: dict | None = None,
+    agent: Agent | None = None,
 ) -> RequestInfo:
     if recipients is None:
         recipients = _target_users(db, item.project_id, item.target_user_id, item.target_module_id)
@@ -250,7 +308,7 @@ def _finish_request_change(
     record_event(
         db,
         project_id=item.project_id,
-        actor_id=user_id,
+        **_actor(user_id, agent),
         event_type=event_type,
         object_type="collaboration_request",
         object_id=item.id,
@@ -271,11 +329,20 @@ def _finish_request_change(
 
 
 def create_request(
-    db: Session, project_id: UUID, user_id: UUID, body: RequestCreate | dict
+    db: Session,
+    project_id: UUID,
+    user_id: UUID,
+    body: RequestCreate | dict,
+    *,
+    agent: Agent | None = None,
 ) -> RequestInfo:
+    if agent is not None:
+        _authorize_agent(db, agent, "create_request", project_id, user_id)
     require_member(db, project_id, user_id)
     body = _validated(RequestCreate, body)
     _lock_project(db, project_id)
+    if agent is not None:
+        _authorize_agent(db, agent, "create_request", project_id, user_id, lock=True)
     recipients = _target_users(
         db, project_id, body.target_user_id, body.target_module_id, must_exist=True
     )
@@ -299,6 +366,7 @@ def create_request(
         "request_created",
         "收到新的协作需求",
         recipients=recipients,
+        agent=agent,
         details={
             "title": item.title,
             "target_user_id": str(item.target_user_id) if item.target_user_id else None,
@@ -325,9 +393,22 @@ def get_request(db: Session, project_id: UUID, request_id: UUID, user_id: UUID) 
     return _request_infos(db, [_get_request(db, project_id, request_id)])[0]
 
 
-def accept_request(db: Session, project_id: UUID, request_id: UUID, user_id: UUID) -> RequestInfo:
+def accept_request(
+    db: Session,
+    project_id: UUID,
+    request_id: UUID,
+    user_id: UUID,
+    *,
+    agent: Agent | None = None,
+) -> RequestInfo:
+    if agent is not None:
+        _authorize_agent(db, agent, "accept_request", project_id, user_id, request_id=request_id)
     require_member(db, project_id, user_id)
     item = _get_request(db, project_id, request_id, lock=True)
+    if agent is not None:
+        _authorize_agent(
+            db, agent, "accept_request", project_id, user_id, request_id=request_id, lock=True
+        )
     targets = _target_users(
         db, project_id, item.target_user_id, item.target_module_id, must_exist=True
     )
@@ -338,15 +419,22 @@ def accept_request(db: Session, project_id: UUID, request_id: UUID, user_id: UUI
     item.accepted_by = user_id
     item.accepted_at = datetime.now(UTC)
     item.status = "accepted"
-    return _finish_request_change(db, item, user_id, "request_accepted", "需求已接手")
+    return _finish_request_change(db, item, user_id, "request_accepted", "需求已接手", agent=agent)
 
 
 def _append_message(
-    db: Session, item: CollaborationRequest, user_id: UUID, body: MessageCreate, kind: str
+    db: Session,
+    item: CollaborationRequest,
+    user_id: UUID,
+    body: MessageCreate,
+    kind: str,
+    *,
+    agent: Agent | None = None,
 ) -> RequestMessage:
     message = RequestMessage(
         request_id=item.id,
         author_id=user_id,
+        agent_id=_agent_id(agent),
         kind=kind,
         content=body.content,
         created_at=datetime.now(UTC),
@@ -357,11 +445,23 @@ def _append_message(
 
 
 def respond_request(
-    db: Session, project_id: UUID, request_id: UUID, user_id: UUID, body: MessageCreate | dict
+    db: Session,
+    project_id: UUID,
+    request_id: UUID,
+    user_id: UUID,
+    body: MessageCreate | dict,
+    *,
+    agent: Agent | None = None,
 ) -> RequestInfo:
+    if agent is not None:
+        _authorize_agent(db, agent, "respond_request", project_id, user_id, request_id=request_id)
     require_member(db, project_id, user_id)
     body = _validated(MessageCreate, body)
     item = _get_request(db, project_id, request_id, lock=True)
+    if agent is not None:
+        _authorize_agent(
+            db, agent, "respond_request", project_id, user_id, request_id=request_id, lock=True
+        )
     if item.accepted_by is None and user_id in _target_users(
         db, project_id, item.target_user_id, item.target_module_id
     ):
@@ -370,7 +470,7 @@ def respond_request(
         raise CollaborationPermissionError("只有接手人可以回应需求")
     if item.status not in ("accepted", "responded"):
         raise CollaborationStateError("只有已接手且尚未解决的需求可以回应")
-    message = _append_message(db, item, user_id, body, "response")
+    message = _append_message(db, item, user_id, body, "response", agent=agent)
     item.responded_at = message.created_at
     item.status = "responded"
     return _finish_request_change(
@@ -380,6 +480,7 @@ def respond_request(
         "request_responded",
         "需求已有回应",
         details={"message_id": str(message.id)},
+        agent=agent,
     )
 
 
