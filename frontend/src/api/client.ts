@@ -1,0 +1,39 @@
+export class ApiError extends Error {
+  constructor(public readonly status: number, message: string) { super(message) }
+}
+export async function api<T>(path: string, body?: unknown, method?: string): Promise<T> {
+  const form = body instanceof FormData
+  const response = await fetch(path, {
+    method: method ?? (body === undefined ? 'GET' : 'POST'),
+    credentials: 'same-origin', cache: 'no-store',
+    headers: body !== undefined || method === 'POST'
+      ? { 'X-CSRF-Protection': '1', ...(!form && body !== undefined ? { 'Content-Type': 'application/json' } : {}) } : {},
+    body: body === undefined ? undefined : form ? body : JSON.stringify(body),
+  })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    if (response.status === 401) window.dispatchEvent(new Event('session-expired'))
+    const detail = payload?.detail
+    const message = typeof detail === 'string' ? detail : Array.isArray(detail)
+      ? detail.map((item: {loc?: unknown[]; msg?: string}) => `${item.loc?.slice(1).join('.') ?? ''}：${item.msg ?? '输入无效'}`).join('；')
+      : '操作未完成，请稍后重试。'
+    throw new ApiError(response.status, message)
+  }
+  return response.status === 204 ? undefined as T : response.json() as Promise<T>
+}
+export function projectPath(id: string): string { return `/api/projects/${encodeURIComponent(id)}` }
+export function errorText(error: unknown): string {
+  return error instanceof Error ? error.message === 'Failed to fetch' ? '无法连接服务，请检查网络后重试。' : error.message : '操作未完成，请重试。'
+}
+export function dateText(value: string | null | undefined): string {
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '未设置'
+}
+export function localDate(value: string | null): string {
+  if (!value) return ''
+  const date = new Date(value)
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16)
+}
+export function utcDate(value: string): string | null { return value ? new Date(value).toISOString() : null }
+export const stageLabels: Record<string, string> = {not_started:'未开始', planning:'方案设计中', writing:'内容输出中', checking:'内容自查中', submitted:'已提交'}
+export const requestLabels: Record<string, string> = {open:'待接手',accepted:'已接手',responded:'待发起人确认',resolved:'已解决'}
+export function sizeText(size: number): string { return size < 1024 ? `${size} B` : size < 1048576 ? `${(size/1024).toFixed(1)} KB` : `${(size/1048576).toFixed(1)} MB` }

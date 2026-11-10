@@ -4,6 +4,7 @@ import { ElButton, ElConfigProvider, ElInput, ElTag } from 'element-plus'
 import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import { AuthError, getAccount, signIn, signOut } from './api/auth'
 import type { Account } from './api/auth'
+import ProjectWorkspace from './components/ProjectWorkspace.vue'
 
 type Connection = 'checking' | 'connected' | 'unavailable'
 
@@ -144,11 +145,14 @@ async function checkConnection() {
   }
 }
 
+function sessionExpired() { returnToLogin(); authError.value = '登录已过期，请重新登录。' }
 onMounted(() => {
+  window.addEventListener('session-expired', sessionExpired)
   void checkConnection()
   void loadSession()
 })
 onBeforeUnmount(() => {
+  window.removeEventListener('session-expired', sessionExpired)
   activeRequest?.abort()
   activeRequest = undefined
 })
@@ -156,7 +160,8 @@ onBeforeUnmount(() => {
 
 <template>
   <ElConfigProvider :locale="zhCn">
-  <div class="workspace">
+  <ProjectWorkspace v-if="account && sessionState === 'ready'" :account="account" :busy="busy" :logout-error="authError" @logout="logout" />
+  <div v-else class="workspace">
     <header class="workspace-header">
       <a class="wordmark" href="/" aria-label="Team.s 首页">Team.s<span>v2</span></a>
       <p class="workspace-label">科研协同工作台</p>

@@ -1,0 +1,17 @@
+export interface Project { id: string; name: string; role: 'leader'|'member'; created_by: string; created_at: string }
+export interface Member { user_id: string; username: string; role: 'leader'|'member' }
+export interface Module { id: string; name: string; assignee_ids: string[]; deadline: string|null; goal: string; core_argument: string; scope_in: string; scope_out: string; upstream: {module_id:string;needs:string}[]; downstream_handoff: string; delivery_format: 'docx'|'pptx'|'pdf'|'md'|'other'; plan_version_id?: string }
+export interface PlanContent { research_question:string; final_deliverable:string; deadline:string|null; argument:string; terms:{term:string;definition:string;source:string}[]; data_definitions:{variable:string;source:string;processing:string}[]; modules:Module[] }
+export interface PlanVersion {id:string;project_id:string;version:number;change_note:string;content:PlanContent;published_by:string;published_at:string}
+export interface SpecItem {number:string; category:'writing'|'template'|'format'|'handoff';requirement:string;check_method:'program'|'ai'|'manual';positive_example:string;negative_example:string;template_resource_id:string|null}
+export interface SpecVersion {id:string;project_id:string;version:number;change_note:string;items:SpecItem[];published_by:string;published_at:string}
+export interface Resource {id:string;filename:string;size:number;sha256:string;builtin:boolean;download_url:string}
+export interface PresetCatalog {presets:{key:string;name:string;items:SpecItem[]}[];templates:Resource[]}
+export interface Progress {id:string;project_id:string;module_id:string;user_id:string;stage:string;summary:string;plan_version_id:string;created_at:string;source:'human'}
+export interface ModuleProgress {module_id:string;stage:string;last_report:Progress|null;delivery_id:string|null}
+export interface Delivery {id:string;project_id:string;module_id:string;version:number;filename:string;sha256:string;size:number;submitted_by:string;submitted_at:string;plan_version_id:string;spec_version_id:string;ai_participation:'none'|'assisted'|'primary';ai_note:string;handoff_note:string;status:'submitted';download_url:string}
+export interface Material {id:string;project_id:string;filename:string;sha256:string;size:number;uploaded_by:string;uploaded_at:string;download_url:string}
+export interface RequestMessage {id:string;request_id:string;author_id:string;kind:'response'|'supplement';content:string;created_at:string}
+export interface CollaborationRequest {id:string;project_id:string;created_by:string;title:string;content:string;target_user_id:string|null;target_module_id:string|null;expected_by:string|null;status:'open'|'accepted'|'responded'|'resolved';accepted_by:string|null;created_at:string;accepted_at:string|null;responded_at:string|null;resolved_at:string|null;messages:RequestMessage[]}
+export interface Notification {id:string;project_id:string;user_id:string;kind:string;message:string;details:Record<string,unknown>;created_at:string;read_at:string|null}
+export interface ProjectEvent {id:number;occurred_at:string;project_id:string|null;actor_type:'human'|'agent';actor_id:string;represented_user_id:string|null;event_type:string;object_type:string;object_id:string;details:Record<string,unknown>;plan_version_id:string|null;spec_version_id:string|null;task_id:string|null}

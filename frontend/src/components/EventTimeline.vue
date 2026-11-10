@@ -1,0 +1,55 @@
+<script setup lang="ts">
+import { onMounted, ref, watch } from 'vue'
+import { api, dateText, errorText, projectPath } from '../api/client'
+import type { Member, Module, Delivery, ProjectEvent } from '../api/types'
+const props = defineProps<{projectId:string;members:Member[];modules:Module[];deliveries:Delivery[];leader:boolean}>()
+const events = ref<ProjectEvent[]>([])
+const task = ref(''), actor = ref(''), object = ref(''), error = ref(''), loading = ref(false), more = ref(false)
+let serial = 0
+const labels: Record<string,string> = {project_created:'创建项目',invitation_created:'创建邀请',member_joined:'加入项目',plan_published:'发布整体方案',module_updated:'更新分工模块',spec_published:'发布团队规范',template_uploaded:'上传模板',delivery_submitted:'提交正式交付',material_uploaded:'上传共享材料',progress_reported:'回报进度',request_created:'发起协作需求',request_accepted:'接手需求',request_responded:'回应需求',request_supplemented:'补充需求',request_resolved:'确认需求解决',notification_read:'阅读通知'}
+function name(id:string) { return props.members.find(m=>m.user_id===id)?.username ?? id }
+async function load(older = false) {
+  const sequence = ++serial
+  loading.value = true; error.value = ''
+  if (!older) { events.value=[]; more.value=false }
+  const query = new URLSearchParams({limit:'100'})
+  if(task.value) query.set('task_id', task.value)
+  if(actor.value) query.set('actor_id', actor.value)
+  if(object.value) query.set('object_id', object.value)
+  if(older && events.value[0]) query.set('before_id', String(events.value[0].id))
+  try {
+    const result = await api<ProjectEvent[]>(`${projectPath(props.projectId)}/events?${query}`)
+    if(sequence !== serial) return
+    events.value = older ? [...result, ...events.value] : result
+    more.value = result.length === 100
+  } catch(e) { if(sequence === serial) error.value = errorText(e) }
+  finally { if(sequence === serial) loading.value = false }
+}
+watch([task, actor, object],()=>void load())
+onMounted(()=>void load())
+</script>
+<template>
+  <section class="panel" aria-labelledby="timeline-title">
+    <div class="panel-heading"><div><p class="eyebrow">操作留痕</p><h2 id="timeline-title">项目时间线</h2></div><button class="btn quiet" :disabled="loading" @click="load()">刷新时间线</button></div>
+    <div class="form-grid timeline-filters">
+      <div class="field"><label for="timeline-task">按任务查看</label><select id="timeline-task" v-model="task"><option value="">全部任务</option><option v-for="module in modules" :key="module.id" :value="module.id">{{module.name}}</option></select></div>
+      <div class="field"><label for="timeline-actor">按操作者查看</label><select id="timeline-actor" v-model="actor"><option value="">全部成员</option><option v-for="member in members" :key="member.user_id" :value="member.user_id">{{member.username}}</option></select></div>
+      <div class="field"><label for="timeline-delivery">按交付查看</label><select id="timeline-delivery" v-model="object"><option value="">全部对象</option><option v-for="delivery in deliveries" :key="delivery.id" :value="delivery.id">{{delivery.filename}} · v{{delivery.version}}</option></select></div>
+    </div>
+    <div v-if="leader" class="toolbar export-actions"><a class="btn" :href="`${projectPath(projectId)}/events/export?format=json`" download>导出 JSON</a><a class="btn" :href="`${projectPath(projectId)}/events/export?format=csv`" download>导出 CSV</a><span class="muted">导出当前项目完整日志</span></div>
+    <p v-if="error" class="error" role="alert">{{error}}</p><p v-if="loading" class="muted" role="status">正在读取记录…</p>
+    <button v-if="more" class="btn quiet" :disabled="loading" @click="load(true)">加载更早记录</button>
+    <p v-if="!events.length && !loading && !error" class="empty">暂无符合筛选条件的记录。</p>
+    <ol class="timeline-list">
+      <li v-for="event in [...events].reverse()" :key="event.id" :data-event-type="event.event_type">
+        <div class="timeline-mark" aria-hidden="true"></div><div class="timeline-body"><div class="toolbar"><strong>{{name(event.actor_id)}}</strong><span>{{labels[event.event_type] ?? event.event_type}}</span><time :datetime="event.occurred_at">{{dateText(event.occurred_at)}}</time></div>
+        <p v-if="event.details.summary" class="pre-wrap">{{event.details.summary}}</p><p v-if="event.details.change_note" class="pre-wrap">{{event.details.change_note}}</p><p v-if="event.details.title">{{event.details.title}}</p>
+        <details><summary>记录详情 · #{{event.id}}</summary><dl><dt>对象</dt><dd>{{event.object_type}} · {{event.object_id}}</dd><dt v-if="event.plan_version_id">方案版本</dt><dd v-if="event.plan_version_id">{{event.plan_version_id}}</dd><dt v-if="event.spec_version_id">规范版本</dt><dd v-if="event.spec_version_id">{{event.spec_version_id}}</dd></dl><pre>{{JSON.stringify(event.details,null,2)}}</pre></details>
+        </div>
+      </li>
+    </ol>
+  </section>
+</template>
+<style scoped>
+.timeline-filters { margin: 24px 0; }.export-actions { margin-bottom: 24px; }.timeline-list{list-style:none;margin:24px 0 0;padding:0}.timeline-list li{display:grid;grid-template-columns:16px 1fr;gap:16px;position:relative;padding:0 0 28px}.timeline-list li:not(:last-child)::before{content:'';position:absolute;left:5px;top:14px;bottom:0;width:1px;background:var(--line)}.timeline-mark{width:11px;height:11px;background:var(--teal);border:3px solid #d9ede9;border-radius:50%;margin-top:5px}.timeline-body{min-width:0}.timeline-body time{font-size:12px;color:var(--muted);margin-left:auto}.timeline-body p{font-size:14px;margin:10px 0}.timeline-body details{margin-top:10px;font-size:12px;color:var(--muted)}.timeline-body summary{cursor:pointer}.timeline-body dl{display:grid;grid-template-columns:auto 1fr;gap:8px}.timeline-body dd{margin:0;overflow-wrap:anywhere}.timeline-body pre{max-width:100%;overflow:auto;background:var(--canvas);padding:12px}
+</style>
