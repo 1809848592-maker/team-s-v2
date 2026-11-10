@@ -8,6 +8,9 @@ x-backend: &backend
   environment:
     DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-teams}:${POSTGRES_PASSWORD:-teams_local_dev}@postgres:5432/${POSTGRES_DB:-teams_dev}
     STATIC_DIR: /app/static
+    SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-1209600}
+    SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-false}
+    PLATFORM_ADMIN_USER_IDS: ${PLATFORM_ADMIN_USER_IDS:-}
   init: true
 
 services:

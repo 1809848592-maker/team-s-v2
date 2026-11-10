@@ -38,25 +38,34 @@ a:focus-visible, button:focus-visible { outline: 3px solid #28746c; outline-offs
 }
 .wordmark span { font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: .04em; color: #627184; }
 .workspace-label { margin: 0; font-size: 13px; color: #627184; }
-.workspace-main { flex: 1; width: min(100%, 1040px); padding: 112px 48px 80px; margin: 0 auto; }
+.workspace-main { flex: 1; width: min(100%, 1040px); padding: 72px 48px 56px; margin: 0 auto; }
 .eyebrow { margin: 0 0 24px; font-size: 13px; letter-spacing: .08em; color: #28746c; }
 h1 { margin: 0; font-size: clamp(28px, 3.5vw, 40px); line-height: 1.45; font-weight: 600; letter-spacing: -.025em; }
 .intro-description { margin: 20px 0 0; color: #627184; font-size: 16px; line-height: 1.8; }
-.connection-panel {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 24px;
-  margin-top: 56px;
+.account-panel {
+  max-width: 480px;
+  margin-top: 40px;
   padding: 28px 32px;
   background: #fff;
   border: 1px solid #dce3eb;
   border-top: 3px solid #263c56;
   border-radius: 8px;
 }
-.panel-copy h2 { margin: 0; font-size: 16px; font-weight: 600; }
-.panel-copy p { margin: 10px 0 0; color: #627184; font-size: 14px; line-height: 1.7; }
+.account-panel h2 { margin: 0; font-size: 20px; font-weight: 600; }
+.panel-description { margin: 12px 0 24px; color: #627184; font-size: 14px; line-height: 1.7; }
+.account-form { display: grid; gap: 20px; }
+.form-field { display: grid; gap: 8px; }
+.form-field label { font-size: 14px; }
+.form-field .el-input__wrapper { min-height: 40px; }
+.field-hint { margin: 0; color: #627184; font-size: 12px; line-height: 1.5; }
+.submit-button { min-height: 40px; width: 100%; }
+.mode-switch { display: flex; align-items: center; gap: 4px; margin: 20px 0 0; color: #627184; font-size: 13px; }
+.form-message { margin: 20px 0 0; font-size: 14px; line-height: 1.7; }
+.error-message { color: #b34242; }
+.success-message { color: #28746c; }
+.account-heading-row { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; }
+.account-name { overflow-wrap: anywhere; margin: 24px 0 0; font-size: 24px; font-weight: 500; }
+.connection-panel { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
 .connection-actions { display: flex; align-items: center; gap: 16px; }
 .connection-help { flex-basis: 100%; margin: 0; color: #b34242; font-size: 13px; line-height: 1.8; }
 .workspace-footer { padding: 24px 48px; color: #627184; font-size: 12px; line-height: 1.7; }
@@ -64,7 +73,7 @@ h1 { margin: 0; font-size: clamp(28px, 3.5vw, 40px); line-height: 1.45; font-wei
 @media (max-width: 640px) {
   .workspace-header { padding: 20px 24px; gap: 20px; }
   .workspace-main { padding: 64px 24px; }
-  .connection-panel { padding: 24px; margin-top: 40px; }
+  .account-panel { padding: 24px; margin-top: 32px; }
   .connection-actions { flex-wrap: wrap; }
   .workspace-footer { padding: 24px; }
 }
