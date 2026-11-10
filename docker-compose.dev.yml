@@ -1,0 +1,14 @@
+# 可选热更新：docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+# 前端开发服务器另用 npm run dev，通过 Vite 代理访问后端。
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+  web:
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"]
+    volumes:
+      - ./backend/app:/app/backend/app:ro
+      - ./backend/alembic:/app/backend/alembic:ro
+  worker:
+    volumes:
+      - ./backend/app:/app/backend/app:ro

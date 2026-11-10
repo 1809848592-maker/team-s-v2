@@ -1,0 +1,70 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  color: #263c56;
+  background: #f5f7fa;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --el-color-primary: #263c56;
+  --el-color-success: #28746c;
+  --el-color-danger: #b34242;
+  --el-border-radius-base: 6px;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, a { -webkit-tap-highlight-color: transparent; }
+a:focus-visible, button:focus-visible { outline: 3px solid #28746c; outline-offset: 4px; }
+
+.workspace { min-height: 100vh; display: flex; flex-direction: column; }
+.workspace-header {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  padding: 24px 48px;
+  background: #fff;
+  border-bottom: 1px solid #dce3eb;
+}
+.wordmark {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+  color: inherit;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 30px;
+  font-weight: 700;
+  letter-spacing: -1.5px;
+  text-decoration: none;
+}
+.wordmark span { font: 500 11px/1.4 -apple-system, BlinkMacSystemFont, sans-serif; letter-spacing: .04em; color: #627184; }
+.workspace-label { margin: 0; font-size: 13px; color: #627184; }
+.workspace-main { flex: 1; width: min(100%, 1040px); padding: 112px 48px 80px; margin: 0 auto; }
+.eyebrow { margin: 0 0 24px; font-size: 13px; letter-spacing: .08em; color: #28746c; }
+h1 { margin: 0; font-size: clamp(28px, 3.5vw, 40px); line-height: 1.45; font-weight: 600; letter-spacing: -.025em; }
+.intro-description { margin: 20px 0 0; color: #627184; font-size: 16px; line-height: 1.8; }
+.connection-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 24px;
+  margin-top: 56px;
+  padding: 28px 32px;
+  background: #fff;
+  border: 1px solid #dce3eb;
+  border-top: 3px solid #263c56;
+  border-radius: 8px;
+}
+.panel-copy h2 { margin: 0; font-size: 16px; font-weight: 600; }
+.panel-copy p { margin: 10px 0 0; color: #627184; font-size: 14px; line-height: 1.7; }
+.connection-actions { display: flex; align-items: center; gap: 16px; }
+.connection-help { flex-basis: 100%; margin: 0; color: #b34242; font-size: 13px; line-height: 1.8; }
+.workspace-footer { padding: 24px 48px; color: #627184; font-size: 12px; line-height: 1.7; }
+
+@media (max-width: 640px) {
+  .workspace-header { padding: 20px 24px; gap: 20px; }
+  .workspace-main { padding: 64px 24px; }
+  .connection-panel { padding: 24px; margin-top: 40px; }
+  .connection-actions { flex-wrap: wrap; }
+  .workspace-footer { padding: 24px; }
+}

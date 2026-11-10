@@ -1,0 +1,50 @@
+name: teams-platform-dev
+
+x-backend: &backend
+  image: teams-platform:dev
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  environment:
+    DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-teams}:${POSTGRES_PASSWORD:-teams_local_dev}@postgres:5432/${POSTGRES_DB:-teams_dev}
+    STATIC_DIR: /app/static
+  init: true
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-teams_dev}
+      POSTGRES_USER: ${POSTGRES_USER:-teams}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-teams_local_dev}
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  web:
+    <<: *backend
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "127.0.0.1:${WEB_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 12
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  postgres_dev_data:

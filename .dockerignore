@@ -1,0 +1,12 @@
+.git
+.env
+.env.*
+.tools
+.verification
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.ruff_cache
+**/*.egg-info
+**/node_modules
+**/dist
