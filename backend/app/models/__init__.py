@@ -1,3 +1,4 @@
+from app.models.agent import Agent
 from app.models.auth import AuthSession, User
 from app.models.base import Base
 from app.models.collaboration import CollaborationRequest, ProgressReport, RequestMessage
@@ -11,6 +12,7 @@ from app.models.resource import Resource
 from app.models.spec import SpecVersion
 
 __all__ = [
+    "Agent",
     "AuthSession",
     "Base",
     "CollaborationRequest",

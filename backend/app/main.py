@@ -3,6 +3,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.agents import router as agents_router
 from app.api.auth import router as auth_router
 from app.api.collaboration import router as collaboration_router
 from app.api.deliveries import router as deliveries_router
@@ -30,6 +31,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
+    app.include_router(agents_router, prefix="/api")
     app.include_router(projects_router, prefix="/api")
     app.include_router(events_router, prefix="/api")
     app.include_router(plans_router, prefix="/api")
