@@ -14,7 +14,7 @@ class ReviewJob(Base):
     __tablename__ = "review_jobs"
     __table_args__ = (
         CheckConstraint(
-            "status IN ('queued', 'running', 'retry_wait', 'succeeded', 'failed')",
+            "status IN ('queued', 'running', 'retry_wait', 'paused', 'succeeded', 'failed')",
             name="ck_review_jobs_status",
         ),
         CheckConstraint(
@@ -29,7 +29,7 @@ class ReviewJob(Base):
         ),
         CheckConstraint(
             "last_error IS NULL OR last_error IN ('pipeline_not_ready', 'execution_error', "
-            "'timeout', 'lease_expired', 'stale_workflow')",
+            "'timeout', 'lease_expired', 'stale_workflow', 'quota_exceeded')",
             name="ck_review_jobs_error",
         ),
         Index("ix_review_jobs_due", "status", "available_at"),
@@ -55,7 +55,7 @@ class ReviewJob(Base):
 
     @property
     def next_attempt_at(self) -> datetime | None:
-        return self.available_at if self.status == "retry_wait" else None
+        return self.available_at if self.status in {"retry_wait", "paused"} else None
 
     @property
     def message(self) -> str:
@@ -70,5 +70,6 @@ class ReviewJob(Base):
             "queued": "审核任务已排队，尚无审核结论。",
             "running": "正在处理审核任务，尚无审核结论。",
             "retry_wait": "审核处理未完成，正在等待自动重试。",
+            "paused": "当日审核额度已用完，审核已暂停，尚无审核结论。",
             "succeeded": "后台处理已完成，审核结论待汇总。",
         }[self.status]

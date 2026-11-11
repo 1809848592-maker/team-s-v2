@@ -1,0 +1,94 @@
+# 每百万token的高峰价格上界快照，仅用于估算；以DeepSeek实际账单为准。
+# 密钥只配置环境变量名称，真实值由应用Settings显式传入，不存入此文件。
+provider = "deepseek"
+
+[reviewers.spec_compliance]
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+key_env = "DEEPSEEK_API_KEY"
+thinking = false
+max_tokens = 4096
+timeout_seconds = 60
+[reviewers.spec_compliance.prices]
+currency = "CNY"
+input_cache_hit = "0.04"
+input_cache_miss = "2"
+output = "8"
+effective_date = "2026-11-11"
+estimate_basis = "peak_ceiling"
+
+[reviewers.citation_extract]
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+key_env = "DEEPSEEK_API_KEY"
+thinking = false
+max_tokens = 4096
+timeout_seconds = 60
+[reviewers.citation_extract.prices]
+currency = "CNY"
+input_cache_hit = "0.04"
+input_cache_miss = "2"
+output = "8"
+effective_date = "2026-11-11"
+estimate_basis = "peak_ceiling"
+
+[reviewers.citation_alignment]
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+key_env = "DEEPSEEK_API_KEY"
+thinking = false
+max_tokens = 4096
+timeout_seconds = 60
+[reviewers.citation_alignment.prices]
+currency = "CNY"
+input_cache_hit = "0.04"
+input_cache_miss = "2"
+output = "8"
+effective_date = "2026-11-11"
+estimate_basis = "peak_ceiling"
+
+[reviewers.logic]
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com"
+key_env = "DEEPSEEK_API_KEY"
+thinking = true
+max_tokens = 8192
+timeout_seconds = 60
+[reviewers.logic.prices]
+currency = "CNY"
+input_cache_hit = "0.30"
+input_cache_miss = "9"
+output = "27"
+effective_date = "2026-11-11"
+estimate_basis = "peak_ceiling"
+
+[reviewers.linkage]
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com"
+key_env = "DEEPSEEK_API_KEY"
+thinking = true
+max_tokens = 8192
+timeout_seconds = 60
+[reviewers.linkage.prices]
+currency = "CNY"
+input_cache_hit = "0.30"
+input_cache_miss = "9"
+output = "27"
+effective_date = "2026-11-11"
+estimate_basis = "peak_ceiling"
+
+# 只预留模型选择；规范辅助起草调用由M3-15实现。
+[reviewers.spec_draft]
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+key_env = "DEEPSEEK_API_KEY"
+thinking = false
+max_tokens = 4096
+timeout_seconds = 60
+[reviewers.spec_draft.prices]
+currency = "CNY"
+input_cache_hit = "0.04"
+input_cache_miss = "2"
+output = "8"
+effective_date = "2026-11-11"
+estimate_basis = "peak_ceiling"

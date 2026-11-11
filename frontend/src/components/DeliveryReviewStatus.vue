@@ -12,6 +12,7 @@ defineProps<{ status: DeliveryReviewStatus|null|undefined; progress?: ReviewProg
       <p class="muted" :data-review-job-status="progress.status">{{ reviewProgressLabels[progress.status] }} · 尝试次数：{{ progress.attempt }} / {{ progress.max_attempts }}</p>
       <p v-if="progress.message" class="muted">{{ progress.message }}</p>
       <p v-if="progress.status === 'retry_wait' && progress.next_attempt_at" class="muted">下次尝试：{{ dateText(progress.next_attempt_at) }}</p>
+      <p v-if="progress.status === 'paused' && progress.next_attempt_at" class="muted">可再次尝试时间：{{ dateText(progress.next_attempt_at) }}</p>
       <p v-if="progress.status === 'succeeded'" class="muted">后台处理完成，等待后续审核汇总；尚未形成审核结论。</p>
       <p v-else-if="progress.status === 'failed'" class="muted">审核尚未完成，未生成通过结论。</p>
     </template>

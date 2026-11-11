@@ -8,6 +8,7 @@ import signal
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from multiprocessing.connection import Connection
 from queue import Empty, Queue
 from threading import Event, Thread
@@ -15,6 +16,7 @@ from threading import Event, Thread
 from sqlalchemy.orm import Session
 
 from app.review.runner import DeliveryReviewInput, PipelineNotReadyError, run_delivery_review
+from app.services.llm_usage import QuotaExceededError
 from app.services.review_jobs import claim_next, complete_job, fail_job
 
 logger = logging.getLogger(__name__)
@@ -29,6 +31,7 @@ class _ExecutionResult:
     result: dict | None = None
     error_code: str | None = None
     stopped: bool = False
+    retry_at: datetime | None = None
 
 
 def _error_message(code: str) -> bytes:
@@ -51,6 +54,17 @@ def _execute_child(sender: Connection, handler: ReviewHandler, review: DeliveryR
             message = _error_message("execution_error")
     except PipelineNotReadyError:
         message = _error_message("pipeline_not_ready")
+    except QuotaExceededError as error:
+        if not isinstance(error.retry_at, datetime) or error.retry_at.tzinfo is None:
+            message = _error_message("execution_error")
+        else:
+            message = json.dumps(
+                {
+                    "kind": "error",
+                    "error_code": "quota_exceeded",
+                    "retry_at": error.retry_at.astimezone(UTC).isoformat(),
+                }
+            ).encode("utf-8")
     except BaseException:
         message = _error_message("execution_error")
     try:
@@ -76,8 +90,19 @@ def _receive_result(
                     elif message.get("kind") == "error" and message.get("error_code") in {
                         "pipeline_not_ready",
                         "execution_error",
+                        "quota_exceeded",
                     }:
-                        outcome = _ExecutionResult(error_code=message["error_code"])
+                        code = message["error_code"]
+                        retry_at = None
+                        if code == "quota_exceeded":
+                            value = message.get("retry_at")
+                            if not isinstance(value, str) or len(value) > 40:
+                                raise ValueError
+                            retry_at = datetime.fromisoformat(value)
+                            if retry_at.tzinfo is None:
+                                raise ValueError
+                            retry_at = retry_at.astimezone(UTC)
+                        outcome = _ExecutionResult(error_code=code, retry_at=retry_at)
                 break
         else:
             return
@@ -192,6 +217,7 @@ def run_once(
                 code,
                 retryable=code != "pipeline_not_ready",
                 retry_delay_seconds=retry_delay_seconds,
+                retry_at=outcome.retry_at,
             )
         db.commit()
     return True

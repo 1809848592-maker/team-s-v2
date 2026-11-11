@@ -9,7 +9,7 @@ interface ReviewPollingOptions {
   deliveries: Ref<Delivery[]>
 }
 
-const activeStatuses = new Set(['queued', 'running', 'retry_wait'])
+const activeStatuses = new Set(['queued', 'running', 'retry_wait', 'paused'])
 
 export function useReviewPolling(options: ReviewPollingOptions) {
   const error = ref(''), refreshing = ref(false)
@@ -18,12 +18,13 @@ export function useReviewPolling(options: ReviewPollingOptions) {
   let controller: AbortController | undefined
   let epoch = 0, mounted = true, inFlight = false, blocked = false, failures = 0
   const hasActive = () => options.deliveries.value.some(item => item.review_progress && activeStatuses.has(item.review_progress.status))
+  const pausedOnly = () => hasActive() && options.deliveries.value.every(item => !item.review_progress || !activeStatuses.has(item.review_progress.status) || item.review_progress.status === 'paused')
   const enabled = () => mounted && visible.value && options.enabled() && !!options.projectId()
   const canPoll = () => enabled() && hasActive() && !blocked
   function clearTimer() { if (timer !== undefined) clearTimeout(timer); timer = undefined }
-  function schedule(delay = 3000) {
+  function schedule(delay = Math.min(3000 * Math.max(failures, 1), 15000)) {
     clearTimer()
-    if (canPoll()) timer = setTimeout(() => void poll(), delay)
+    if (canPoll()) timer = setTimeout(() => void poll(), pausedOnly() ? Math.max(delay, 60000) : delay)
   }
   async function poll(manual = false) {
     clearTimer()
@@ -54,13 +55,13 @@ export function useReviewPolling(options: ReviewPollingOptions) {
       clearTimeout(deadline)
       if (controller === requestController) controller = undefined
       inFlight = false; refreshing.value = false
-      schedule(Math.min(3000 * Math.max(failures, 1), 15000))
+      schedule()
     }
   }
   function retry() { blocked = false; void poll(true) }
   function onVisibilityChange() { visible.value = document.visibilityState !== 'hidden' }
   document.addEventListener('visibilitychange', onVisibilityChange)
-  watch([options.contextKey, enabled, hasActive], () => {
+  watch([options.contextKey, enabled, hasActive, pausedOnly], () => {
     ++epoch; clearTimer(); controller?.abort(); error.value = ''; failures = 0; blocked = false
     schedule()
   }, { immediate: true, flush: 'sync' })

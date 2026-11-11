@@ -16,6 +16,7 @@ dependencies = [
   "uvicorn>=0.32,<1",
   "python-multipart>=0.0.20,<1",
   "mcp>=2.3,<3",
+  "httpx2>=2.16,<3",
 ]
 
 [project.optional-dependencies]
@@ -23,6 +24,9 @@ dev = ["pytest>=8,<10", "httpx>=0.28,<1", "ruff>=0.9,<1"]
 
 [tool.setuptools.packages.find]
 include = ["app*"]
+
+[tool.setuptools.package-data]
+"app.review" = ["models.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

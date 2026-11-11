@@ -7,13 +7,18 @@ from pydantic import BaseModel, ConfigDict
 class ReviewProgress(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
-    status: Literal["queued", "running", "retry_wait", "succeeded", "failed"]
+    status: Literal["queued", "running", "retry_wait", "paused", "succeeded", "failed"]
     attempt: int
     max_attempts: int
     message: str
     last_error: (
         Literal[
-            "pipeline_not_ready", "execution_error", "timeout", "lease_expired", "stale_workflow"
+            "pipeline_not_ready",
+            "execution_error",
+            "timeout",
+            "lease_expired",
+            "stale_workflow",
+            "quota_exceeded",
         ]
         | None
     )

@@ -2,7 +2,7 @@ from functools import lru_cache
 from pathlib import Path
 from uuid import UUID
 
-from pydantic import Field, field_validator
+from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     review_job_lease_grace_seconds: float = Field(default=5.0, ge=0)
     review_job_max_attempts: int = Field(default=3, ge=1)
     review_job_retry_delay_seconds: float = Field(default=5.0, ge=0)
+    deepseek_api_key: SecretStr = Field(default=SecretStr(""), repr=False)
+    llm_enable_live_calls: bool = False
+    llm_project_daily_reviews: int = Field(default=20, ge=0)
+    llm_platform_daily_reviews: int = Field(default=200, ge=0)
+    llm_platform_daily_tokens: int = Field(default=1_000_000, ge=0)
+    llm_max_calls_per_review: int = Field(default=64, ge=1)
     session_ttl_seconds: int = Field(default=14 * 24 * 3600, gt=0)
     session_cookie_secure: bool = False
     platform_admin_user_ids: str = ""

@@ -22,7 +22,14 @@ from app.services.delivery_states import transition_review
 
 WORKER_ACTOR = "platform-review-worker"
 ERROR_CODES = frozenset(
-    {"pipeline_not_ready", "execution_error", "timeout", "lease_expired", "stale_workflow"}
+    {
+        "pipeline_not_ready",
+        "execution_error",
+        "timeout",
+        "lease_expired",
+        "stale_workflow",
+        "quota_exceeded",
+    }
 )
 
 
@@ -214,7 +221,10 @@ def claim_next(
         raise ValueError("队列执行参数无效")
     current = _now(db, now)
     due = or_(
-        and_(ReviewJob.status.in_(("queued", "retry_wait")), ReviewJob.available_at <= current),
+        and_(
+            ReviewJob.status.in_(("queued", "retry_wait", "paused")),
+            ReviewJob.available_at <= current,
+        ),
         and_(ReviewJob.status == "running", ReviewJob.lease_until <= current),
     )
     candidates = list(
@@ -230,7 +240,7 @@ def claim_next(
             item, workflow, job = locked
             # 获取锁后以数据库当前时钟再次检查，等待锁不会延长旧领取的有效期。
             current = _now(db, now)
-            if job.status not in {"queued", "running", "retry_wait"}:
+            if job.status not in {"queued", "running", "retry_wait", "paused"}:
                 continue
             if (
                 workflow is None
@@ -306,6 +316,7 @@ def fail_job(
     *,
     retryable: bool = True,
     retry_delay_seconds: float = 5,
+    retry_at: datetime | None = None,
     now: datetime | None = None,
 ) -> bool:
     if error_code not in ERROR_CODES or retry_delay_seconds < 0:
@@ -318,6 +329,25 @@ def fail_job(
         current = _now(db, now)
         if item.project_id != claim.project_id or not _matches(job, workflow, claim, current):
             return False
+        if error_code == "quota_exceeded":
+            if workflow.state == "ai_reviewing":
+                _change_workflow(db, item, workflow, job, "ai_review_partial_failure")
+            if retry_at is not None and retry_at.tzinfo is None:
+                raise ValueError("额度恢复时间必须带时区")
+            job.status, job.last_error = "paused", "quota_exceeded"
+            job.attempt -= 1
+            job.claim_token = job.lease_until = None
+            job.result = None
+            job.available_at = retry_at or datetime.combine(
+                current.date() + timedelta(days=1), datetime.min.time(), UTC
+            )
+            if job.available_at <= current:
+                job.available_at = current + timedelta(seconds=60)
+            job.updated_at = current
+            job.finished_at = None
+            _event(db, job, item, "review_job_paused")
+            _refresh(db, item)
+            return True
         _fail_locked(
             db,
             item,
