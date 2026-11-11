@@ -82,7 +82,7 @@ def _json_value(value, *, depth=0, budget=None):
         raise ValueError
 
 
-def _examples(value, *, positive):
+def _examples(value, *, positive, output_model=ReviewOutput):
     if not isinstance(value, tuple) or not 1 <= len(value) <= 8:
         raise ValueError
     for example in value:
@@ -96,7 +96,7 @@ def _examples(value, *, positive):
         if len(encoded.encode("utf-8")) > 16 * 1024:
             raise ValueError
         if positive:
-            ReviewOutput.model_validate_json(encoded)
+            output_model.model_validate_json(encoded)
     return _freeze(value)
 
 
@@ -108,9 +108,14 @@ class InstructionBundle:
     rubric: str
     positive_examples: tuple[dict, ...]
     negative_examples: tuple[dict, ...]
+    output_model: type[ReviewOutput] = ReviewOutput
 
     def __post_init__(self) -> None:
         try:
+            if not isinstance(self.output_model, type) or not issubclass(
+                self.output_model, ReviewOutput
+            ):
+                raise ValueError
             if not isinstance(self.reviewer, str) or not re.fullmatch(
                 r"[a-z][a-z0-9_]{0,63}", self.reviewer
             ):
@@ -122,10 +127,14 @@ class InstructionBundle:
             _text(self.instructions, 12000)
             _text(self.rubric, 12000)
             object.__setattr__(
-                self, "positive_examples", _examples(self.positive_examples, positive=True)
+                self,
+                "positive_examples",
+                _examples(self.positive_examples, positive=True, output_model=self.output_model),
             )
             object.__setattr__(
-                self, "negative_examples", _examples(self.negative_examples, positive=False)
+                self,
+                "negative_examples",
+                _examples(self.negative_examples, positive=False, output_model=self.output_model),
             )
             if len(self.system_text().encode("utf-8")) > MAX_INSTRUCTION_BYTES:
                 raise ValueError
@@ -138,15 +147,19 @@ class InstructionBundle:
                 value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False
             )
 
+        policy = _POLICY
+        if self.output_model is not ReviewOutput:
+            fields = ", ".join(self.output_model.model_fields)
+            policy = policy.replace("包含 findings 和 coverage", f"恰含平台指定顶层字段 {fields}")
         return (
             f"审核员：{self.reviewer}\n指令版本：{self.version}\n\n"
-            f"{_POLICY}\n\n指令\n{self.instructions}\n\n评判口径\n{self.rubric}\n\n"
+            f"{policy}\n\n指令\n{self.instructions}\n\n评判口径\n{self.rubric}\n\n"
             f"正例（仅作结构示范）\n{encode(self.positive_examples)}\n\n"
             f"反例（以下输出错误，不得模仿）\n{encode(self.negative_examples)}"
         )
 
 
-def _parse(data: bytes) -> InstructionBundle:
+def _parse(data: bytes, *, output_model: type[ReviewOutput] = ReviewOutput) -> InstructionBundle:
     try:
         if len(data) > MAX_INSTRUCTION_BYTES:
             raise ValueError
@@ -157,7 +170,7 @@ def _parse(data: bytes) -> InstructionBundle:
             if not isinstance(document[name], list):
                 raise ValueError
             document[name] = tuple(document[name])
-        return InstructionBundle(**document)
+        return InstructionBundle(**document, output_model=output_model)
     except (ValueError, TypeError, OverflowError, RecursionError, UnicodeError):
         raise ReviewerInstructionError from None
 
@@ -186,6 +199,24 @@ def load_framework_instruction() -> InstructionBundle:
             data = stream.read(MAX_INSTRUCTION_BYTES + 1)
         bundle = _parse(data)
         if bundle.reviewer != "framework" or bundle.version != "2026-11-11.1":
+            raise ValueError
+        return bundle
+    except (OSError, ValueError, TypeError, OverflowError, RecursionError):
+        raise ReviewerInstructionError from None
+
+
+def load_spec_instruction() -> InstructionBundle:
+    """Load the fixed specification resource with the platform's trusted schema."""
+    from app.review.reviewers.spec_types import SpecReviewOutput
+
+    try:
+        resource = resources.files("app.review.reviewers").joinpath(
+            "resources", "spec_compliance.toml"
+        )
+        with resource.open("rb") as stream:
+            data = stream.read(MAX_INSTRUCTION_BYTES + 1)
+        bundle = _parse(data, output_model=SpecReviewOutput)
+        if bundle.reviewer != "spec_compliance" or bundle.version != "2026-11-11.1":
             raise ValueError
         return bundle
     except (OSError, ValueError, TypeError, OverflowError, RecursionError):

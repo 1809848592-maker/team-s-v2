@@ -258,7 +258,7 @@ def test_system_text_is_canonical_for_different_json_object_key_order(tmp_path):
     assert replace(bundle, negative_examples=(changed,)).system_text() == bundle.system_text()
 
 
-def test_instruction_bundle_declares_only_the_six_public_fields():
+def test_instruction_bundle_declares_six_file_fields_and_trusted_output_model():
     assert set(InstructionBundle.__dataclass_fields__) == {
         "reviewer",
         "version",
@@ -266,4 +266,5 @@ def test_instruction_bundle_declares_only_the_six_public_fields():
         "rubric",
         "positive_examples",
         "negative_examples",
+        "output_model",
     }
