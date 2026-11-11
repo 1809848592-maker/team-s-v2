@@ -5,6 +5,7 @@ from app.models.base import Base
 from app.models.collaboration import CollaborationRequest, ProgressReport, RequestMessage
 from app.models.delivery import DeliveryVersion, SharedMaterial
 from app.models.event import Event
+from app.models.final_review import FinalReviewDecision
 from app.models.llm_usage import DailyBudget, LLMProjectPolicy, ModelCall, ReviewAdmission
 from app.models.module import Module
 from app.models.notification import Notification
@@ -27,6 +28,7 @@ __all__ = [
     "DeliveryWorkflow",
     "DraftConfirmation",
     "Event",
+    "FinalReviewDecision",
     "DailyBudget",
     "LLMProjectPolicy",
     "ModelCall",

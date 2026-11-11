@@ -19,7 +19,7 @@
 - **M1 已由发起人于 2026-11-10 验收通过，方案制定者独立复核确认：10组验收及78项后端测试通过。**
 - 按发起人最新授权，开始M2，顺序完成M2-01至M2-07，每项独立测试/提交，最终验收后停下。
 - M2-01至M2-07均已实现、测试并独立提交；发起人于2026-11-11验收通过，方案制定者独立复核12组验收、129项后端测试及外部越权探测401。
-- M3-01至M3-10均已实现、通过各项验证并逐项提交；下一项为M3-11“终审”。按AGENTS.md每次完成一个任务，M3全阶段结束后实际运行验收脚本并停下等待验收。
+- M3-01至M3-11均已实现、通过各项验证并逐项提交；下一项为M3-12“版本绑定”。按AGENTS.md每次完成一个任务，M3全阶段结束后实际运行验收脚本并停下等待验收。
 
 ## M1-01：工程骨架（2026-11-10）
 
@@ -423,3 +423,19 @@ colima stop teams-m1
 - 隔离M3 Compose 18002最终build及`up --wait`通过，`0016_review_reports(head)`、`alembic check`无漂移、health ok，web/PG healthy、worker运行。最终镜像内 **6组冒烟全部通过**：真实四服务禁用live持久化部分失败/19秒重试、超过64KiB报告的小引用及一次接受、实际ASGI HTTP身份/角色/CSRF/标注、智能体两种标注×有无本人Cookie拒绝并4条留痕、不采纳重命中关联免拦截、3次退回后第4轮无job待终审未收敛；另核对不可变触发器、原文件和零模型账本。20个源码/迁移hash与工作区一致，stderr空，临时schema复查无残留，真实模型/外部API/socket尝试均0。初轮容器验证fixture的假令牌格式不符得到401，修正fixture后完整重跑通过，未为验证改产品权限。最终镜像`sha256:04080737794b4ce3e6b96921fd364dfb269d9d87479865fa2d79da9b167e1ce6`。
 - 证据：`.verification/M3-10-pytest.log`、`M3-10-pytest-final.log`、`M3-10-pytest-final2.log`、`M3-10-targeted.log`、`M3-10-pipeline-targeted.log`、`M3-10-build.log`、`M3-10-up.log`、`M3-10-container-smoke.json`、`M3-10-container-summary.json/.md`、`M3-10-source-comparison.json`、`M3-10-wheel.log`及`M3-10-wheel-verification.json`。Compose始终显式`--env-file /dev/null`及原隔离M3配置，未修改v1或M1/M2/开发环境；所有自动化模型调用使用固定替身，没有真实DeepSeek调用。
 - 本轮仅完成M3-10；无新增待裁定问题。下一项M3-11“终审”，本项不开放终审/规范不适用裁定。M3最终里程碑验收尚未执行，真实模型调用仍只留待该验收；本轮独立提交后停下。
+
+## M3-11：终审（2026-11-12）
+
+- 新增项目负责人人类终审GET/POST`/api/projects/{project_id}/deliveries/{delivery_id}/review/final`。GET对项目成员提供核对上下文及能否操作，POST只允许当前项目负责人；模块负责人、创建者或平台管理员身份不能替代项目leader。一名有权限负责人即可通过；本人提交的交付不能自己终审，只有当前项目恰好一名负责人时例外，并在决定、状态事件及返回结果明确`self_review=true`。限制同样覆盖退回和规范不适用裁定。
+- 不采纳意见单列为`not_adopted`，其中规范类另列`specification_exceptions`，沿用既有规范“不采纳/不适用”的处理，不新增成员标注类型。重复关联按原意见与实际处理修订/理由/人合组并保留关联ID；规范例外在通过前必须逐项明确accept/reject。任一规范例外被驳回，整体即终审退回，即使总请求为approve；每条驳回须有意见，普通终审退回也须有总意见。严格校验额外字段、重复/未知ID、4000字符及NUL边界，操作者、目标状态和自审标记只由服务端决定。
+- 终审上下文独立读取当前和同模块历史正式交付的完整处理记录，不复用报告页面500条展示截断。最大5000条、32MiB，超限明确拒绝，不能省略规范例外后通过；覆盖501条历史及溢出回归。工作流修订与上下文SHA-256同时核验，哈希覆盖负责人集合、绑定版本、所有相关意见、理由/标注修订/人，后续标注或负责人变化使旧页面请求409，须刷新再核对。
+- 新增迁移`0017_final_review`及不可变`final_review_decisions`，保存实际审核人、时间、自审、总决定、规范裁定、完整当时依据和context hash，每交付仅一笔终审。锁项目→工作流，锁后重新读角色和负责人集合，核验待终审与预期修订，决定/状态/事件同事务；并发决定只一笔成功，迟到事件写入失败全部回滚。沿既有集中状态机进入`adopted/final_returned`，无新状态；终审退回后的重提交为新正式版本，旧决定保留。
+- 修复唯一负责人自审所需的并发前提：接受成员/负责人邀请也按项目→邀请加锁，等锁后`populate_existing`重读邀请状态。真实PG验证持项目锁时新leader加入确实在`pg_blocking_pids`等待，释放后方可插入；双方预缓存未使用的同一邀请再并发接受仍只成功一次。没有增加或改变角色权限。
+- 已终审GET使用冻结快照，后续追加旧标注不能改写终审依据。普通报告附上终审结论/返工意见；所属人的智能体仍只读本人交付，终审快照不经agent报告输出，规范裁定按本人可见finding过滤，防止借本人新版本读取其他提交人的历史理由/裁定。状态及决定事件仅记录ID、结果、hash、自审及数量，意见正文不复制进事件。
+- HTTP Bearer不能终审或裁定规范不适用，包括同时携带本人Cookie且所属人是项目负责人；实际MCP没有终审/规范裁定工具，未知越权调用拒绝并留痕。新增48项API/权限测试，覆盖成员/负责人所属智能体×有无本人Cookie×通过/退回/驳回规范，以及真实网络MCP、CSRF、身份与输入校验、真实HTTP服务完成及陈旧标注拒绝。终审逻辑本身不调用模型，未新增厂商或Key配置。
+- 新增 **82项测试**（32项终审真实PG、48项HTTP/MCP、2项邀请并发），专项最终 **90 passed in 47.82s**（含8项既有项目测试）；首轮完整回归 **1489 passed in 184.84s**，随后新添5项冻结快照/他人裁定过滤/历史变更/上限边界专项也通过；最终完整后端 **1494 passed in 174.29s，无跳过、无警告**。只读独立复核未发现必修问题。初期2项真实service联测因SQLAlchemy隐式JOIN来源歧义失败，改为显式FROM及JOIN条件后85项专项通过，最终90项通过；另有测试collect误用pytest保留参数名、并行新router在service未落盘时导入阻断，均已修复重跑，无遗留失败。
+- 环境记录：一次API专项误从platform工作目录启动，既有`app.main`默认配置导入**可能隐式读取platform/.env**；未显示或提交真实Key，没有真实模型调用或外发。此后统一从backend目录运行测试、显式测试Settings不加载env。容器验证始终`--env-file /dev/null`且独立M3配置，本项没有新增隐式读取配置逻辑。
+- Ruff、全库格式、依赖锁及diff检查通过。wheel构建成功，121个Python/指令资源文件逐字节匹配源码，临时build已移至忽略目录。说明见`deploy/FINAL_REVIEW.md`。本项只接通后端终审，完整报告/终审页面按计划留M3-14，无前端改动，不新增浏览器测试。
+- 隔离M3 Compose 18002最终镜像build及`up --wait`通过，`0017_final_review(head)`、`alembic check`无漂移，health ok，web/PG healthy、worker运行。最终镜像内 **6组冒烟全通过**：唯一leader自审、多leader禁自审且另一人单笔采用、标注hash陈旧及规范驳回自动退回、实际HTTP角色/CSRF/负责人所属智能体带与不带Cookie的通过/退回/规范驳回共6次403审计、迟到事件回滚与退回新版本重新审核、不可变触发器/原文件/零模型账本/事件隐私。9个源码/迁移hash与工作区相同，最终stderr空，临时schema复查无残留，真实模型/外部API/socket尝试均0。初轮验证fixture关闭Session后读取lazy状态触发DetachedInstanceError，改为活动Session查询后6组完整重跑通过，未为验证改产品源码。镜像`sha256:b1e02bba1806d5302e2e4a19fa080648af3cbb0c5aedd4bbf105d4ae3e755214`。
+- 证据：`.verification/M3-11-targeted.log`、`M3-11-targeted-final.log`、`M3-11-project-lock-final.log`、`M3-11-pytest.log`、`M3-11-pytest-final.log`、`M3-11-build.log`、`M3-11-up.log`、`M3-11-container-smoke.json`、`M3-11-container-summary.json/.md`、`M3-11-source-comparison.json`、`M3-11-wheel.log`及`M3-11-wheel-verification.json`。所有代码/文档修改仅platform，未改v1或M1/M2/开发容器环境。无新增待裁定问题。
+- 本轮只完成M3-11并独立提交后停下；下一项M3-12“版本绑定”。M3最终验收尚未执行，真实DeepSeek仍只在该验收使用，Key不提交Git。

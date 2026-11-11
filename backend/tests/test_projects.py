@@ -1,8 +1,14 @@
 from concurrent.futures import ThreadPoolExecutor
-from threading import Barrier
-from uuid import uuid4
+from threading import Barrier, Event
+from time import monotonic
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
+from sqlalchemy import func, select
+
+from app.models import Invitation, Project, ProjectMember
+from app.security import token_hash
+from app.services import projects
 
 CSRF_HEADERS = {"X-CSRF-Protection": "1"}
 PASSWORD = "project-test-password"
@@ -224,6 +230,98 @@ def test_concurrent_invitation_acceptance_adds_only_one_member(auth_environment)
     assert member_roles(leader, project["id"]) == {
         leader_identity["id"]: "leader",
         winner["id"]: "member",
+    }
+
+
+def test_leader_invitation_waits_for_project_lock_before_adding_membership(auth_environment):
+    leader = auth_environment.client
+    leader_identity = register(leader, "leader")
+    project = create_project(leader)
+    token = invite(leader, project["id"], "leader")
+    newcomer = auth_environment.make_client()
+    newcomer_identity = register(newcomer, "new-leader")
+    project_id, newcomer_id = UUID(project["id"]), UUID(newcomer_identity["id"])
+    started = Event()
+    accepting_pid = []
+
+    def join():
+        with auth_environment.sessions() as db:
+            accepting_pid.append(db.scalar(select(func.pg_backend_pid())))
+            started.set()
+            accepted_project, membership = projects.accept_invitation(db, token, newcomer_id)
+            return accepted_project.id, membership.role
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with auth_environment.sessions() as locking:
+            locking.scalar(select(Project.id).where(Project.id == project_id).with_for_update())
+            locking_pid = locking.scalar(select(func.pg_backend_pid()))
+            pending = executor.submit(join)
+            try:
+                assert started.wait(timeout=5)
+                deadline = monotonic() + 5
+                while monotonic() < deadline:
+                    blocked_by = locking.scalar(select(func.pg_blocking_pids(accepting_pid[0])))
+                    if locking_pid in blocked_by:
+                        break
+                    assert not pending.done(), "邀请接受在项目锁释放之前完成了"
+                    Event().wait(0.01)
+                else:
+                    raise AssertionError("邀请接受没有等待已有项目锁")
+                assert not pending.done()
+                assert locking.get(ProjectMember, (project_id, newcomer_id)) is None
+                assert (
+                    locking.scalar(
+                        select(func.count())
+                        .select_from(ProjectMember)
+                        .where(
+                            ProjectMember.project_id == project_id, ProjectMember.role == "leader"
+                        )
+                    )
+                    == 1
+                )
+            finally:
+                locking.rollback()
+        assert pending.result(timeout=10) == (project_id, "leader")
+    assert member_roles(leader, project["id"]) == {
+        leader_identity["id"]: "leader",
+        newcomer_identity["id"]: "leader",
+    }
+
+
+def test_concurrent_cached_leader_invitation_is_rechecked_after_project_lock(auth_environment):
+    leader = auth_environment.client
+    leader_identity = register(leader, "leader")
+    project = create_project(leader)
+    token = invite(leader, project["id"], "leader")
+    contenders = []
+    for name in ("first-leader", "second-leader"):
+        client = auth_environment.make_client()
+        contenders.append(register(client, name))
+    barrier = Barrier(2)
+
+    def join(identity):
+        with auth_environment.sessions() as db:
+            cached = db.get(Invitation, token_hash(token))
+            assert cached.used_at is None
+            barrier.wait(timeout=5)
+            try:
+                project_item, membership = projects.accept_invitation(
+                    db, token, UUID(identity["id"])
+                )
+                return str(project_item.id), str(membership.user_id), membership.role
+            except projects.InvalidInvitationError:
+                db.rollback()
+                return None
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(join, identity) for identity in contenders]
+        results = [future.result(timeout=10) for future in futures]
+    accepted = [result for result in results if result is not None]
+    assert len(accepted) == 1
+    assert accepted[0][0] == project["id"] and accepted[0][2] == "leader"
+    assert member_roles(leader, project["id"]) == {
+        leader_identity["id"]: "leader",
+        accepted[0][1]: "leader",
     }
 
 

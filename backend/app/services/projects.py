@@ -112,9 +112,25 @@ def create_invitation(db: Session, project_id: UUID, user_id: UUID, role: Role) 
 
 
 def accept_invitation(db: Session, raw: str, user_id: UUID) -> tuple[Project, ProjectMember]:
-    # PostgreSQL 行锁让并发使用同一邀请的请求依次检查最新的使用状态。
+    # 先定位项目，再按项目→邀请加锁；负责人加入与唯一负责人自审共享项目锁。
+    # 第一次读取仅作定位，等锁后必须重读邀请，不能沿用等待前的使用状态。
+    digest = token_hash(raw)
+    project_id = db.scalar(select(Invitation.project_id).where(Invitation.token_hash == digest))
+    if project_id is None:
+        raise InvalidInvitationError
+    project = db.scalar(
+        select(Project)
+        .where(Project.id == project_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if project is None:
+        raise InvalidInvitationError
     invitation = db.scalar(
-        select(Invitation).where(Invitation.token_hash == token_hash(raw)).with_for_update()
+        select(Invitation)
+        .where(Invitation.token_hash == digest, Invitation.project_id == project.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
     )
     if invitation is None or invitation.used_at is not None:
         raise InvalidInvitationError
@@ -135,9 +151,6 @@ def accept_invitation(db: Session, raw: str, user_id: UUID) -> tuple[Project, Pr
         if getattr(error.orig, "sqlstate", None) == "23505":
             raise AlreadyMemberError from error
         raise
-    project = db.get(Project, invitation.project_id)
-    if project is None:
-        raise ProjectNotFoundError
     record_event(
         db,
         project_id=project.id,

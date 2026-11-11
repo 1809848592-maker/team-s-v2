@@ -495,6 +495,15 @@ def get_report_internal(db, item, *, viewer_owner_id=None):
             )
         return value
 
+    from app.services.final_review import decision_for_report
+
+    allowed = None
+    if viewer_owner_id is not None:
+        # 终审意见供本人返工；他人历史规范项裁定仍不随本人报告外泄。
+        allowed = {str(finding.id) for finding in opinions}
+        allowed.update(str(identity) for identity in visible_ids or ())
+    final_decision = decision_for_report(db, item, visible_finding_ids=allowed)
+
     return {
         "coverage": summary.status,
         "report_id": str(report.id) if report else None,
@@ -508,6 +517,7 @@ def get_report_internal(db, item, *, viewer_owner_id=None):
         "components": report.components if report else {},
         "history": [render(finding) for finding in history[:500]],
         "history_truncated": len(history) > 500,
+        "final_review": final_decision,
     }
 
 
