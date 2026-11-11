@@ -118,7 +118,9 @@ def _record(
     db.expire(item, ["review_workflow"])
 
 
-def start_review(db: Session, project_id: UUID, delivery_id: UUID) -> DeliveryWorkflow:
+def start_review(
+    db: Session, project_id: UUID, delivery_id: UUID, *, return_limit: int = 3
+) -> DeliveryWorkflow:
     """已由人正式提交的版本在同一事务初始化状态和持久审核任务。"""
     try:
         with db.no_autoflush:
@@ -142,6 +144,12 @@ def start_review(db: Session, project_id: UUID, delivery_id: UUID) -> DeliveryWo
                 actor_type="human",
                 represented_user_id=None,
             )
+            from app.services.review_reports import maybe_bypass_review
+
+            if type(return_limit) is not int or return_limit < 1:
+                raise ValueError("AI审核退回上限必须为正整数")
+            if maybe_bypass_review(db, item, workflow, limit=return_limit):
+                return workflow
             from app.services.review_jobs import enqueue_review
 
             enqueue_review(db, item, workflow)

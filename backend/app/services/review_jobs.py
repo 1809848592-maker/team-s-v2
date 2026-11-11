@@ -284,8 +284,15 @@ def claim_next(
 
 @_atomic
 def complete_job(
-    db: Session, claim: JobClaim, result: dict, *, now: datetime | None = None
+    db: Session,
+    claim: JobClaim,
+    result: dict,
+    *,
+    now: datetime | None = None,
+    retry_delay_seconds: float = 5,
 ) -> bool:
+    if retry_delay_seconds < 0:
+        raise ValueError("审核重试延时不能为负数")
     if not isinstance(result, dict):
         raise ValueError("后台结果必须是JSON对象")
     encoded = json.dumps(result, ensure_ascii=False, allow_nan=False)
@@ -299,6 +306,24 @@ def complete_job(
         current = _now(db, now)
         if item.project_id != claim.project_id or not _matches(job, workflow, claim, current):
             return False
+        if "report_id" in result:
+            from app.services.review_reports import ReportValidationError, accept_report
+
+            try:
+                with db.begin_nested():
+                    summary, target = accept_report(db, item, workflow, job, claim, result)
+            except ReportValidationError:
+                _fail_locked(
+                    db, item, workflow, job, "execution_error", True, current, retry_delay_seconds
+                )
+                return True
+            if summary.status == "incomplete":
+                _fail_locked(
+                    db, item, workflow, job, "execution_error", True, current, retry_delay_seconds
+                )
+                job.result = json.loads(encoded)
+                return True
+            _change_workflow(db, item, workflow, job, target)
         job.status, job.result = "succeeded", json.loads(encoded)
         job.claim_token = job.lease_until = None
         job.last_error = None

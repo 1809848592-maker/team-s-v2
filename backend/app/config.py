@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     review_job_lease_grace_seconds: float = Field(default=5.0, ge=0)
     review_job_max_attempts: int = Field(default=3, ge=1)
     review_job_retry_delay_seconds: float = Field(default=5.0, ge=0)
+    review_return_limit: int = Field(default=3, ge=1)
     deepseek_api_key: SecretStr = Field(default=SecretStr(""), repr=False)
     llm_enable_live_calls: bool = False
     llm_project_daily_reviews: int = Field(default=20, ge=0)

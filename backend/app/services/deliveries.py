@@ -68,6 +68,7 @@ def submit_delivery(
     storage: Storage,
     max_bytes: int,
     commit: bool = True,
+    review_return_limit: int = 3,
 ) -> DeliveryVersion:
     require_member(db, project_id, user_id)
     try:
@@ -138,7 +139,7 @@ def submit_delivery(
             "handoff_note": item.handoff_note,
         },
     )
-    start_review(db, project_id, item.id)
+    start_review(db, project_id, item.id, return_limit=review_return_limit)
     if commit:
         db.commit()
     return item

@@ -12,6 +12,7 @@ from app.models.plan import PlanVersion
 from app.models.project import Invitation, Project, ProjectMember
 from app.models.resource import Resource
 from app.models.review_job import ReviewJob
+from app.models.review_report import ReviewAnnotation, ReviewFinding, ReviewReport, ReviewSummary
 from app.models.review_workflow import DeliveryStateTransition, DeliveryWorkflow
 from app.models.spec import SpecVersion
 
@@ -32,6 +33,10 @@ __all__ = [
     "ReviewAdmission",
     "Invitation",
     "ReviewJob",
+    "ReviewReport",
+    "ReviewSummary",
+    "ReviewFinding",
+    "ReviewAnnotation",
     "Module",
     "Notification",
     "PlanVersion",

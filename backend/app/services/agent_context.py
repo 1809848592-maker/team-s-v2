@@ -21,7 +21,7 @@ from app.schemas.agent_context import (
 )
 from app.schemas.plans import ModuleContent, PlanContent
 from app.schemas.specs import SpecVersionInfo
-from app.services import agent_permissions
+from app.services import agent_permissions, review_reports
 
 
 def _dependencies(task: ModuleContent, modules: list[ModuleContent]) -> TaskDependencies:
@@ -128,6 +128,30 @@ def get_task_context(
             .execution_options(populate_existing=True)
         )
         handoffs = _upstream_handoffs(db, agent, principal.project_id, task)
+        own_delivery = db.scalar(
+            select(DeliveryVersion)
+            .where(
+                DeliveryVersion.project_id == principal.project_id,
+                DeliveryVersion.module_id == module_id,
+                DeliveryVersion.submitted_by == principal.owner_id,
+            )
+            .order_by(DeliveryVersion.version.desc())
+            .limit(1)
+        )
+        review = ReviewCoverage()
+        if own_delivery is not None:
+            agent_permissions.authorize(
+                db,
+                agent,
+                "read_review",
+                project_id=principal.project_id,
+                delivery_id=own_delivery.id,
+            )
+            review = ReviewCoverage.model_validate(
+                review_reports.get_report_internal(
+                    db, own_delivery, viewer_owner_id=principal.owner_id
+                )
+            )
         result = TaskContext(
             project_id=principal.project_id,
             task_id=module_id,
@@ -154,7 +178,7 @@ def get_task_context(
             ),
             dependencies=DataBlock(content=_dependencies(task, content.modules)),
             upstream_deliveries=handoffs,
-            latest_review=DataBlock(content=ReviewCoverage()),
+            latest_review=DataBlock(content=review),
         )
         record_event(
             db,
@@ -173,7 +197,7 @@ def get_task_context(
                 "spec_version": spec.version if spec is not None else None,
                 "upstream_delivery_ids": [str(item.content.id) for item in handoffs],
                 "upstream_delivery_count": len(handoffs),
-                "review_coverage": "not_covered",
+                "review_coverage": review.coverage,
             },
         )
         db.commit()

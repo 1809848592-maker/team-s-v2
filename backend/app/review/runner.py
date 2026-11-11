@@ -1,4 +1,4 @@
-"""审核流水线入口；后续任务逐项接入实际检查。"""
+"""后台子进程入口；导入模块不会读取环境、密钥或初始化数据库。"""
 
 from dataclasses import dataclass
 from uuid import UUID
@@ -18,4 +18,18 @@ class PipelineNotReadyError(Exception):
 
 
 def run_delivery_review(review: DeliveryReviewInput) -> dict:
-    raise PipelineNotReadyError
+    from app.config import get_settings
+    from app.db import SessionLocal
+    from app.review.citation_databases import CitationDatabaseClient
+    from app.review.factory import build_llm_client
+    from app.services.review_pipeline import execute_pipeline
+    from app.storage import LocalStorage
+
+    settings = get_settings()
+    return execute_pipeline(
+        SessionLocal,
+        review,
+        storage=LocalStorage(settings.storage_dir),
+        client=build_llm_client(SessionLocal, settings),
+        database_client=CitationDatabaseClient(),
+    )

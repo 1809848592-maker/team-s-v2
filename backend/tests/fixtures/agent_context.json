@@ -158,7 +158,7 @@
     "content": {
       "coverage": "not_covered",
       "opinions": [],
-      "note": "审核尚未接入，未覆盖；没有审核结论。"
+      "note": "审核尚未生成报告，未覆盖；没有审核结论。"
     },
     "end_marker": "END_DATA"
   }

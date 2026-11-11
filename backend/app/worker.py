@@ -208,7 +208,7 @@ def run_once(
         return True
     with sessions() as db:
         if outcome.result is not None:
-            complete_job(db, claim, outcome.result)
+            complete_job(db, claim, outcome.result, retry_delay_seconds=retry_delay_seconds)
         else:
             code = outcome.error_code or "execution_error"
             fail_job(

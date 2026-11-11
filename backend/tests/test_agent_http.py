@@ -340,7 +340,7 @@ def test_delivery_http_filters_versions_and_downloads_only_self_or_adopted_direc
     assert review == {
         "coverage": "not_covered",
         "opinions": [],
-        "note": "审核尚未接入，未覆盖；没有审核结论。",
+        "note": "审核尚未生成报告，未覆盖；没有审核结论。",
     }
     assert (
         team.http.get(

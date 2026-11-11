@@ -15,7 +15,7 @@ from app.schemas.deliveries import DeliveryVersionInfo
 from app.schemas.plans import ModuleInfo, PlanContent, PlanVersionInfo
 from app.schemas.specs import SpecVersionInfo
 from app.services import agent_permissions as permissions
-from app.services import collaboration, plans, resources, specs
+from app.services import collaboration, plans, resources, review_reports, specs
 from app.storage import Storage
 
 
@@ -190,17 +190,20 @@ def get_review_result(
 ):
     _begin(db, agent, "read_review", project_id=project_id, delivery_id=delivery_id)
     item = db.get(DeliveryVersion, delivery_id)
+    report = ReviewCoverage.model_validate(
+        review_reports.get_report_internal(db, item, viewer_owner_id=agent.owner_id)
+    )
     return _finish(
         db,
         agent,
         "agent_review_read",
-        ReviewCoverage(),
+        report,
         object_type="delivery_version",
         object_id=item.id,
         task_id=item.module_id,
         plan_version_id=item.plan_version_id,
         spec_version_id=item.spec_version_id,
-        details={"coverage": "not_covered"},
+        details={"coverage": report.coverage},
     )
 
 

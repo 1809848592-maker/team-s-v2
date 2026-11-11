@@ -71,5 +71,5 @@ class ReviewJob(Base):
             "running": "正在处理审核任务，尚无审核结论。",
             "retry_wait": "审核处理未完成，正在等待自动重试。",
             "paused": "当日审核额度已用完，审核已暂停，尚无审核结论。",
-            "succeeded": "后台处理已完成，审核结论待汇总。",
+            "succeeded": "后台处理已完成，请查看审核报告。",
         }[self.status]

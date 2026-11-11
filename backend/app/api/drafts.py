@@ -121,6 +121,7 @@ def confirm_draft(
             body,
             storage=LocalStorage(settings.storage_dir),
             max_bytes=settings.upload_max_bytes,
+            review_return_limit=settings.review_return_limit,
         )
     except ERRORS as error:
         raise draft_error(error) from None

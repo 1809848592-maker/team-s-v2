@@ -173,7 +173,11 @@ def test_unpublished_spec_and_unimplemented_review_are_explicit_without_fabricat
     assert result["spec"] is None
     assert_block(
         result["latest_review"],
-        {"coverage": "not_covered", "opinions": [], "note": "审核尚未接入，未覆盖；没有审核结论。"},
+        {
+            "coverage": "not_covered",
+            "opinions": [],
+            "note": "审核尚未生成报告，未覆盖；没有审核结论。",
+        },
     )
     assert result["upstream_deliveries"] == []
     assert "通过" not in json.dumps(result["latest_review"], ensure_ascii=False)

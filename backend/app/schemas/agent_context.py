@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.schemas.plans import DataDefinition, ModuleContent, TermDefinition
 from app.schemas.specs import SpecVersionInfo
@@ -61,9 +61,13 @@ class UpstreamHandoff(BaseModel):
 
 
 class ReviewCoverage(BaseModel):
-    coverage: Literal["not_covered"] = "not_covered"
-    opinions: list[dict] = Field(default_factory=list, max_length=0)
-    note: Literal["审核尚未接入，未覆盖；没有审核结论。"] = "审核尚未接入，未覆盖；没有审核结论。"
+    """持久报告仍属于数据；无报告保留明确未覆盖及原有兼容结构。"""
+
+    model_config = ConfigDict(extra="allow")
+
+    coverage: Literal["not_covered", "completed", "incomplete", "bypassed"] = "not_covered"
+    opinions: list[dict] = Field(default_factory=list)
+    note: str = "审核尚未生成报告，未覆盖；没有审核结论。"
 
 
 class TaskContext(BaseModel):

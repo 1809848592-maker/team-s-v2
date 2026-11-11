@@ -24,10 +24,16 @@ from test_review_jobs import (
 )
 
 from app.models import DeliveryStateTransition, DeliveryWorkflow, Event
+from app.review.runner import PipelineNotReadyError
 from app.services.review_jobs import claim_next, complete_job
 from app.worker import run_once
 
 PRIVATE_EXCEPTION = "test-private-worker-exception-never-persist-or-print"
+
+
+def fixed_not_ready_handler(review):
+    """保留未就绪错误分支回归；默认入口现已接通实际固定流水线。"""
+    raise PipelineNotReadyError
 
 
 def fixed_pid_handler(review):
@@ -147,9 +153,17 @@ def recover_in_new_worker(database_url, engine_options, lease_until, sender):
         engine.dispose()
 
 
-def test_default_real_spawn_marks_pipeline_not_ready_without_approving_delivery(auth_environment):
+def test_explicit_not_ready_handler_never_approves_delivery_and_does_not_retry(auth_environment):
     team, delivery = queued_delivery(auth_environment)
-    assert run_once(auth_environment.sessions, timeout_seconds=5, lease_grace_seconds=2) is True
+    assert (
+        run_once(
+            auth_environment.sessions,
+            handler=fixed_not_ready_handler,
+            timeout_seconds=5,
+            lease_grace_seconds=2,
+        )
+        is True
+    )
     with auth_environment.sessions() as db:
         job = job_for(db, delivery)
         assert (job.status, job.attempt, job.last_error) == ("failed", 1, "pipeline_not_ready")
@@ -159,7 +173,10 @@ def test_default_real_spawn_marks_pipeline_not_ready_without_approving_delivery(
         assert (workflow.state, workflow.revision) == ("ai_review_partial_failure", 2)
         assert_no_review_pass(db, delivery)
     before = review_snapshot(auth_environment, team, delivery)
-    assert run_once(auth_environment.sessions, timeout_seconds=5) is False
+    assert (
+        run_once(auth_environment.sessions, handler=fixed_not_ready_handler, timeout_seconds=5)
+        is False
+    )
     assert review_snapshot(auth_environment, team, delivery) == before
     progress = team.member.get(f"/api/projects/{team.project['id']}/deliveries").json()[0][
         "review_progress"

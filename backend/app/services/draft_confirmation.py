@@ -98,6 +98,7 @@ def confirm_draft(
     *,
     storage: Storage,
     max_bytes: int,
+    review_return_limit: int = 3,
 ) -> DeliveryVersion:
     try:
         try:
@@ -168,6 +169,7 @@ def confirm_draft(
                     ),
                     storage=storage,
                     max_bytes=max_bytes,
+                    review_return_limit=review_return_limit,
                     commit=False,
                 )
             if delivery.sha256 != draft.sha256 or delivery.size != draft.size:
