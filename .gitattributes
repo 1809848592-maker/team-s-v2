@@ -1,0 +1,4 @@
+# 此样例验证原始BOM和CRLF，检出时须保持逐字节不变。
+backend/tests/fixtures/extract/authored-bom-crlf.md binary
+# PDF含偏移表及合法尾空格，须作为原始二进制文件保存。
+backend/tests/fixtures/extract/*.pdf binary

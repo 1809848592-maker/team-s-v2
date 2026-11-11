@@ -17,6 +17,8 @@ dependencies = [
   "python-multipart>=0.0.20,<1",
   "mcp>=2.3,<3",
   "httpx2>=2.16,<3",
+  "pypdf>=7.0.1,<8",
+  "defusedxml>=0.7,<1",
 ]
 
 [project.optional-dependencies]
@@ -37,3 +39,7 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
+
+[tool.ruff.format]
+# 固定输入样例须保留BOM、CRLF及源代码标记，不能被代码格式化器改写。
+exclude = ["tests/fixtures/**"]
