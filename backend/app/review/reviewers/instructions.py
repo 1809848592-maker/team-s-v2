@@ -221,3 +221,28 @@ def load_spec_instruction() -> InstructionBundle:
         return bundle
     except (OSError, ValueError, TypeError, OverflowError, RecursionError):
         raise ReviewerInstructionError from None
+
+
+def load_citation_instruction(stage: str) -> InstructionBundle:
+    """Only platform-selected citation stages can select their packaged schema."""
+    from app.review.reviewers.citation_types import (
+        CitationAlignmentOutput,
+        CitationExtractionOutput,
+    )
+
+    schemas = {
+        "citation_extract": CitationExtractionOutput,
+        "citation_alignment": CitationAlignmentOutput,
+    }
+    try:
+        if not isinstance(stage, str) or stage not in schemas:
+            raise ValueError
+        resource = resources.files("app.review.reviewers").joinpath("resources", f"{stage}.toml")
+        with resource.open("rb") as stream:
+            data = stream.read(MAX_INSTRUCTION_BYTES + 1)
+        bundle = _parse(data, output_model=schemas[stage])
+        if bundle.reviewer != stage or bundle.version != "2026-11-12.1":
+            raise ValueError
+        return bundle
+    except (OSError, ValueError, TypeError, OverflowError, RecursionError):
+        raise ReviewerInstructionError from None
