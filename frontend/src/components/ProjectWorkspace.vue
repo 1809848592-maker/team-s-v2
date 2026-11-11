@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Account } from '../api/auth'
-import { api, dateText, errorText, projectPath, requestLabels, reviewPendingNotice, reviewStatusText, stageLabels } from '../api/client'
+import { api, dateText, errorText, isPlatformReviewWorker, projectPath, requestLabels, reviewJobEventLabels, reviewStatusText, stageLabels } from '../api/client'
 import type { Project, Member, Module, ModuleProgress, Progress, Delivery, DraftView, CollaborationRequest, Notification, ProjectEvent } from '../api/types'
 import PlanPanel from './PlanPanel.vue'
 import SpecPanel from './SpecPanel.vue'
@@ -9,6 +9,8 @@ import TaskPanel from './TaskPanel.vue'
 import RequestPanel from './RequestPanel.vue'
 import EventTimeline from './EventTimeline.vue'
 import AgentPanel from './AgentPanel.vue'
+import DeliveryReviewStatus from './DeliveryReviewStatus.vue'
+import { useReviewPolling } from '../composables/useReviewPolling'
 const props = defineProps<{account:Account;busy:boolean;logoutError?:string}>()
 defineEmits<{logout:[]}>()
 const projects = ref<Project[]>([]), selected = ref(''), members = ref<Member[]>([]), modules = ref<Module[]>([])
@@ -26,6 +28,12 @@ const leader = computed(()=>current.value?.role==='leader')
 const unread = computed(()=>notifications.value.filter(n=>!n.read_at))
 const todo = computed(()=>requests.value.filter(r=>r.status==='responded' ? r.created_by===props.account.id : r.status==='accepted' ? r.accepted_by===props.account.id : r.status==='open' && (r.target_user_id===props.account.id || modules.value.some(m=>m.id===r.target_module_id && m.assignee_ids.includes(props.account.id)))))
 const pendingDrafts = computed(()=>drafts.value.filter(draft=>draft.owner_id===props.account.id && draft.status==='pending_confirmation'))
+const { error: reviewError, refreshing: reviewRefreshing, retry: retryReview } = useReviewPolling({
+  contextKey: () => `${selected.value}:${props.account.id}`,
+  projectId: () => selected.value,
+  enabled: () => tab.value === 'board' && !loading.value && !acting.value && !error.value,
+  deliveries,
+})
 let serial = 0
 let loadedId = ''
 let mounted = true
@@ -34,11 +42,12 @@ function stage(moduleId:string) { return progress.value.find(p=>p.module_id===mo
 function latestDelivery(moduleId:string) { return deliveries.value.filter(item=>item.module_id===moduleId).reduce<Delivery|undefined>((latest,item)=>!latest || item.version>latest.version ? item : latest,undefined) }
 function progressSource(item:Progress) { return item.source==='agent' ? `${item.agent_name || '智能体'} 代表 ${name(item.user_id)}` : `${name(item.user_id)} · 本人记录` }
 function eventActor(event:ProjectEvent) {
+  if(isPlatformReviewWorker(event)) return '平台审核后台'
   if(event.actor_type==='human') return name(event.actor_id)
   const agent = progress.value.map(item=>item.last_report).find(item=>item?.agent_id===event.actor_id) ?? drafts.value.find(item=>item.agent_id===event.actor_id) ?? requests.value.flatMap(item=>item.messages).find(item=>item.agent_id===event.actor_id)
   return `${agent?.agent_name || '智能体'} 代表 ${event.represented_user_id ? name(event.represented_user_id) : '所属人'}`
 }
-const activityLabels: Record<string,string> = {project_created:'创建项目',invitation_created:'创建邀请',member_joined:'加入项目',plan_published:'发布方案',module_updated:'更新分工',spec_published:'发布规范',template_uploaded:'上传模板',delivery_submitted:'提交交付',delivery_review_started:'开始交付审核',delivery_review_state_changed:'更新交付审核状态',agent_registered:'登记智能体',agent_revoked:'吊销智能体令牌',agent_draft_uploaded:'上传交付稿',agent_draft_confirmed:'确认交付稿',material_uploaded:'上传共享材料',progress_reported:'回报进度',request_created:'发起需求',request_accepted:'接手需求',request_responded:'回应需求',request_supplemented:'补充需求',request_resolved:'确认解决',notification_read:'阅读通知'}
+const activityLabels: Record<string,string> = {...reviewJobEventLabels,project_created:'创建项目',invitation_created:'创建邀请',member_joined:'加入项目',plan_published:'发布方案',module_updated:'更新分工',spec_published:'发布规范',template_uploaded:'上传模板',delivery_submitted:'提交交付',delivery_review_started:'开始交付审核',delivery_review_state_changed:'更新交付审核状态',agent_registered:'登记智能体',agent_revoked:'吊销智能体令牌',agent_draft_uploaded:'上传交付稿',agent_draft_confirmed:'确认交付稿',material_uploaded:'上传共享材料',progress_reported:'回报进度',request_created:'发起需求',request_accepted:'接手需求',request_responded:'回应需求',request_supplemented:'补充需求',request_resolved:'确认解决',notification_read:'阅读通知'}
 function refreshProject() { ++agentPageVersion.value; void loadProject() }
 async function loadProject() {
   const pid = selected.value, accountId = props.account.id, sequence = ++serial
@@ -124,9 +133,10 @@ onBeforeUnmount(()=>{mounted=false;++serial})
         <section v-if="showNotifications" class="panel" aria-labelledby="notifications-title"><div class="panel-heading"><h2 id="notifications-title">站内通知</h2><button class="btn quiet" @click="showNotifications=false">收起通知</button></div><p v-if="!notifications.length" class="empty">暂时没有通知。</p><ul class="notification-list"><li v-for="notification in notifications" :key="notification.id" :class="{unread:!notification.read_at}"><div><p>{{notification.message}}</p><time>{{dateText(notification.created_at)}}</time></div><button v-if="!notification.read_at" class="btn quiet" :disabled="acting" @click="readNotification(notification)">标为已读</button><span v-else class="muted">已读</span></li></ul></section>
         <p v-if="loading" class="muted" role="status">正在同步项目记录…</p>
         <template v-if="tab==='board'">
+          <p v-if="reviewError" class="error" role="alert">审核进度读取失败：{{reviewError}} <button class="btn quiet" :disabled="reviewRefreshing || loading || acting" @click="retryReview">重试读取审核进度</button></p>
           <section class="board-intro"><div><p class="eyebrow">协作现场</p><h2>让研究沿着清楚的分工推进。</h2><p class="muted">以交付记录进展，以回应完成交接。</p></div><div class="board-count"><strong>{{modules.length}}</strong><span>个分工模块</span></div></section>
           <div v-if="!modules.length && !loading" class="panel empty"><h3>从共同的方案开始</h3><p>{{leader?'先邀请组员，再到“方案与分工”发布研究目标和模块。':'负责人发布方案后，分工将在这里显示。'}}</p><button v-if="leader" class="btn primary" @click="tab='plan'">制定方案与分工</button></div>
-          <section v-else class="module-grid" aria-label="分工模块看板"><article v-for="module in modules" :key="module.id" class="module-card"><div class="toolbar"><span class="module-format">{{module.delivery_format.toUpperCase()}}</span><span class="tag" :class="{submitted:stage(module.id)?.stage==='submitted'}">{{stageLabels[stage(module.id)?.stage ?? 'not_started']}}</span></div><h3>{{module.name}}</h3><p class="module-goal">{{module.goal}}</p><p class="muted">负责人 · {{module.assignee_ids.map(name).join('、')}}</p><p class="muted">截止 · {{dateText(module.deadline)}}</p><div class="last-record"><template v-if="stage(module.id)?.last_report"><p>{{stage(module.id)?.last_report?.summary}}</p><span>{{progressSource(stage(module.id)!.last_report!)}} · {{dateText(stage(module.id)?.last_report?.created_at)}}</span></template><p v-else class="muted">尚无进度回报</p></div><p class="muted">交付 · <template v-if="latestDelivery(module.id)">v{{latestDelivery(module.id)!.version}} · {{reviewStatusText(latestDelivery(module.id)!.review_status)}}</template><template v-else>尚未提交</template></p><p v-if="latestDelivery(module.id)?.review_status==='ai_reviewing'" class="muted">{{reviewPendingNotice}}</p><button class="btn quiet" @click="preferredModule=module.id;tab='tasks'">查看任务与交付 →</button></article></section>
+          <section v-else class="module-grid" aria-label="分工模块看板"><article v-for="module in modules" :key="module.id" class="module-card"><div class="toolbar"><span class="module-format">{{module.delivery_format.toUpperCase()}}</span><span class="tag" :class="{submitted:stage(module.id)?.stage==='submitted'}">{{stageLabels[stage(module.id)?.stage ?? 'not_started']}}</span></div><h3>{{module.name}}</h3><p class="module-goal">{{module.goal}}</p><p class="muted">负责人 · {{module.assignee_ids.map(name).join('、')}}</p><p class="muted">截止 · {{dateText(module.deadline)}}</p><div class="last-record"><template v-if="stage(module.id)?.last_report"><p>{{stage(module.id)?.last_report?.summary}}</p><span>{{progressSource(stage(module.id)!.last_report!)}} · {{dateText(stage(module.id)?.last_report?.created_at)}}</span></template><p v-else class="muted">尚无进度回报</p></div><p class="muted">交付 · <template v-if="latestDelivery(module.id)">v{{latestDelivery(module.id)!.version}} · {{reviewStatusText(latestDelivery(module.id)!.review_status)}}</template><template v-else>尚未提交</template></p><DeliveryReviewStatus v-if="latestDelivery(module.id)" :status="latestDelivery(module.id)!.review_status" :progress="latestDelivery(module.id)!.review_progress" hide-status /><button class="btn quiet" @click="preferredModule=module.id;tab='tasks'">查看任务与交付 →</button></article></section>
           <div class="board-bottom"><section class="panel"><div class="panel-heading"><h2>待我处理</h2><button class="btn quiet" @click="tab='requests'">查看协作需求</button></div><p v-if="!todo.length && !pendingDrafts.length" class="empty">当前没有待你处理的事项。</p><ul class="compact-list"><li v-for="draft in pendingDrafts" :key="draft.id"><button class="text-button" @click="preferredModule=draft.module_id;tab='tasks'">确认交付稿 · {{draft.filename}}</button><span class="tag">待本人确认</span></li><li v-for="request in todo.slice(0,8)" :key="request.id"><button class="text-button" @click="tab='requests'">{{request.title}}</button><span class="tag">{{requestLabels[request.status]}}</span></li></ul></section><section class="panel"><div class="panel-heading"><h2>最近活动</h2><button class="btn quiet" @click="tab='timeline'">完整时间线</button></div><ul class="compact-list"><li v-for="event in events.slice(-6).reverse()" :key="event.id"><span>{{eventActor(event)}} · {{activityLabels[event.event_type] ?? event.event_type}}</span><time>{{dateText(event.occurred_at)}}</time></li></ul></section></div>
         </template>
         <PlanPanel v-if="tab==='plan'" :key="selected" :project-id="selected" :members="members" :leader="leader" @changed="loadProject"/>

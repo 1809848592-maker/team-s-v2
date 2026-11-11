@@ -17,6 +17,7 @@ from app.models.base import Base
 from app.models.immutable import protect_snapshot
 
 if TYPE_CHECKING:
+    from app.models.review_job import ReviewJob
     from app.models.review_workflow import DeliveryWorkflow
 
 
@@ -60,10 +61,17 @@ class DeliveryVersion(Base):
     review_workflow: Mapped["DeliveryWorkflow | None"] = relationship(
         lazy="selectin", viewonly=True, uselist=False
     )
+    review_job: Mapped["ReviewJob | None"] = relationship(
+        lazy="selectin", viewonly=True, uselist=False
+    )
 
     @property
     def review_status(self) -> str | None:
         return self.review_workflow.state if self.review_workflow is not None else None
+
+    @property
+    def review_progress(self) -> "ReviewJob | None":
+        return self.review_job
 
 
 class SharedMaterial(Base):

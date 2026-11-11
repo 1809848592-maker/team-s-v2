@@ -1,14 +1,21 @@
 <script setup lang="ts">
-import { reviewPendingNotice, reviewStatusText } from '../api/client'
-import type { DeliveryReviewStatus } from '../api/types'
+import { dateText, reviewProgressLabels, reviewStatusText } from '../api/client'
+import type { DeliveryReviewStatus, ReviewProgress } from '../api/types'
 
-defineProps<{ status: DeliveryReviewStatus|null|undefined }>()
+defineProps<{ status: DeliveryReviewStatus|null|undefined; progress?: ReviewProgress|null; hideStatus?: boolean }>()
 </script>
 
 <template>
   <div class="delivery-review-status" :data-review-status="status ?? 'not_started'">
-    <p class="muted">审核状态：{{ reviewStatusText(status) }}</p>
-    <p v-if="status === 'ai_reviewing'" class="muted">{{ reviewPendingNotice }}</p>
+    <p v-if="!hideStatus" class="muted">审核状态：{{ reviewStatusText(status) }}</p>
+    <template v-if="progress">
+      <p class="muted" :data-review-job-status="progress.status">{{ reviewProgressLabels[progress.status] }} · 尝试次数：{{ progress.attempt }} / {{ progress.max_attempts }}</p>
+      <p v-if="progress.message" class="muted">{{ progress.message }}</p>
+      <p v-if="progress.status === 'retry_wait' && progress.next_attempt_at" class="muted">下次尝试：{{ dateText(progress.next_attempt_at) }}</p>
+      <p v-if="progress.status === 'succeeded'" class="muted">后台处理完成，等待后续审核汇总；尚未形成审核结论。</p>
+      <p v-else-if="progress.status === 'failed'" class="muted">审核尚未完成，未生成通过结论。</p>
+    </template>
+    <p v-else-if="status === 'ai_reviewing' || status === 'ai_review_partial_failure'" class="muted">暂未读取到后台审核进度。</p>
   </div>
 </template>
 

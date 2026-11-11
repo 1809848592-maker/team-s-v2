@@ -12,7 +12,11 @@ class Settings(BaseSettings):
     app_name: str = "Team.s v2"
     database_url: str = "postgresql+psycopg://teams:teams_local_dev@127.0.0.1:5432/teams_dev"
     static_dir: Path = Path(__file__).resolve().parents[2] / "frontend" / "dist"
-    worker_poll_seconds: float = 30.0
+    worker_poll_seconds: float = Field(default=2.0, gt=0)
+    review_job_timeout_seconds: float = Field(default=300.0, gt=0)
+    review_job_lease_grace_seconds: float = Field(default=5.0, ge=0)
+    review_job_max_attempts: int = Field(default=3, ge=1)
+    review_job_retry_delay_seconds: float = Field(default=5.0, ge=0)
     session_ttl_seconds: int = Field(default=14 * 24 * 3600, gt=0)
     session_cookie_secure: bool = False
     platform_admin_user_ids: str = ""

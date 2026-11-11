@@ -1,19 +1,20 @@
-import type { DeliveryReviewStatus } from './types'
+import type { DeliveryReviewStatus, ProjectEvent, ReviewProgress } from './types'
 
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) { super(message) }
 }
-export async function api<T>(path: string, body?: unknown, method?: string): Promise<T> {
+export async function api<T>(path: string, body?: unknown, method?: string, signal?: AbortSignal): Promise<T> {
   const form = body instanceof FormData
   const response = await fetch(path, {
     method: method ?? (body === undefined ? 'GET' : 'POST'),
-    credentials: 'same-origin', cache: 'no-store',
+    credentials: 'same-origin', cache: 'no-store', signal,
     headers: body !== undefined || method === 'POST'
       ? { 'X-CSRF-Protection': '1', ...(!form && body !== undefined ? { 'Content-Type': 'application/json' } : {}) } : {},
     body: body === undefined ? undefined : form ? body : JSON.stringify(body),
   })
   if (!response.ok) {
     const payload = await response.json().catch(() => null)
+    signal?.throwIfAborted()
     if (response.status === 401) window.dispatchEvent(new Event('session-expired'))
     const detail = payload?.detail
     const message = typeof detail === 'string' ? detail : Array.isArray(detail)
@@ -40,5 +41,7 @@ export const stageLabels: Record<string, string> = {not_started:'未开始', pla
 export const requestLabels: Record<string, string> = {open:'待接手',accepted:'已接手',responded:'待发起人确认',resolved:'已解决'}
 export const reviewStatusLabels: Record<DeliveryReviewStatus, string> = {ai_reviewing:'AI审核中',ai_review_partial_failure:'AI审核中（部分失败）',returned:'已退回',pending_final_review:'待终审',adopted:'已采用',final_returned:'终审退回'}
 export function reviewStatusText(status: DeliveryReviewStatus|null|undefined): string { return status ? reviewStatusLabels[status] : '未开始审核' }
-export const reviewPendingNotice = '等待后台审核接入，尚未生成审核结论。'
+export const reviewProgressLabels: Record<ReviewProgress['status'], string> = {queued:'等待后台处理',running:'后台处理中',retry_wait:'等待后台重试',succeeded:'后台处理完成',failed:'后台处理未完成'}
+export const reviewJobEventLabels: Record<string, string> = {review_job_queued:'审核任务已排队',review_job_claimed:'开始处理审核任务',review_job_retry_scheduled:'安排审核任务重试',review_job_failed:'审核任务未完成',review_job_completed:'审核后台处理完成',review_job_lease_expired:'审核任务执行中断',review_job_discarded:'审核任务已停止'}
+export function isPlatformReviewWorker(event: ProjectEvent): boolean { return event.actor_type === 'agent' && event.actor_id === 'platform-review-worker' && event.represented_user_id === null && event.details.execution_origin === 'platform_worker' }
 export function sizeText(size: number): string { return size < 1024 ? `${size} B` : size < 1048576 ? `${(size/1024).toFixed(1)} KB` : `${(size/1048576).toFixed(1)} MB` }

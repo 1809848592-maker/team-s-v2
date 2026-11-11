@@ -81,6 +81,7 @@ def _record(
     actor_id: UUID | str,
     actor_type: Literal["human", "agent"],
     represented_user_id: UUID | None,
+    execution_context: dict | None = None,
 ) -> None:
     event = record_event(
         db,
@@ -96,7 +97,12 @@ def _record(
         task_id=item.module_id,
         plan_version_id=item.plan_version_id,
         spec_version_id=item.spec_version_id,
-        details={"from_state": previous, "to_state": workflow.state, "revision": workflow.revision},
+        details={
+            **(execution_context or {}),
+            "from_state": previous,
+            "to_state": workflow.state,
+            "revision": workflow.revision,
+        },
     )
     db.add(
         DeliveryStateTransition(
@@ -113,7 +119,7 @@ def _record(
 
 
 def start_review(db: Session, project_id: UUID, delivery_id: UUID) -> DeliveryWorkflow:
-    """只为已由人正式提交的版本初始化；无自动队列、模型或审核结果。"""
+    """已由人正式提交的版本在同一事务初始化状态和持久审核任务。"""
     try:
         with db.no_autoflush:
             item = _lock_delivery(db, project_id, delivery_id)
@@ -136,6 +142,9 @@ def start_review(db: Session, project_id: UUID, delivery_id: UUID) -> DeliveryWo
                 actor_type="human",
                 represented_user_id=None,
             )
+            from app.services.review_jobs import enqueue_review
+
+            enqueue_review(db, item, workflow)
             return workflow
     except Exception:
         db.rollback()
@@ -153,6 +162,7 @@ def transition_review(
     actor_id: UUID | str,
     actor_type: Literal["human", "agent"] = "human",
     represented_user_id: UUID | None = None,
+    execution_context: dict | None = None,
 ) -> DeliveryWorkflow:
     """版本条件阻止迟到任务/重复决定；失败连同事件和历史一起回滚。"""
     try:
@@ -181,6 +191,7 @@ def transition_review(
                 actor_id=actor_id,
                 actor_type=actor_type,
                 represented_user_id=represented_user_id,
+                execution_context=execution_context,
             )
             return workflow
     except Exception:
