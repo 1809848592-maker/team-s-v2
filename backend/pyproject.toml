@@ -29,6 +29,7 @@ include = ["app*"]
 
 [tool.setuptools.package-data]
 "app.review" = ["models.toml"]
+"app.review.reviewers" = ["resources/*.toml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
