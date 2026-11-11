@@ -12,6 +12,7 @@ from app.models.collaboration import CollaborationRequest
 from app.models.delivery import DeliveryVersion
 from app.models.plan import PlanVersion
 from app.models.project import ProjectMember
+from app.models.review_workflow import DeliveryWorkflow
 from app.schemas.plans import ModuleContent, PlanContent
 
 _PROJECT_ACTIONS = frozenset(
@@ -79,8 +80,11 @@ def deny(
 
 
 def delivery_is_adopted(db: Session, delivery: DeliveryVersion) -> bool:
-    """M3 接入正式采用状态；当前尚无审核/采用记录，所有他人交付均不视为已采用。"""
-    return False
+    """从持久审核状态读取；无状态的历史交付从不被视为已采用。"""
+    return (
+        db.scalar(select(DeliveryWorkflow.state).where(DeliveryWorkflow.delivery_id == delivery.id))
+        == "adopted"
+    )
 
 
 def _current_modules(db: Session, project_id: UUID) -> list[ModuleContent]:

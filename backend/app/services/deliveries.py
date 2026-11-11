@@ -12,6 +12,7 @@ from app.models.module import Module
 from app.models.project import Project
 from app.schemas.deliveries import DeliverySubmit
 from app.schemas.plans import PlanContent
+from app.services.delivery_states import start_review
 from app.services.plans import get_latest_plan
 from app.services.projects import ProjectNotFoundError, require_member
 from app.services.specs import get_latest_spec
@@ -137,6 +138,7 @@ def submit_delivery(
             "handoff_note": item.handoff_note,
         },
     )
+    start_review(db, project_id, item.id)
     if commit:
         db.commit()
     return item

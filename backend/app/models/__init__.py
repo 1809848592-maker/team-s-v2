@@ -10,6 +10,7 @@ from app.models.notification import Notification
 from app.models.plan import PlanVersion
 from app.models.project import Invitation, Project, ProjectMember
 from app.models.resource import Resource
+from app.models.review_workflow import DeliveryStateTransition, DeliveryWorkflow
 from app.models.spec import SpecVersion
 
 __all__ = [
@@ -19,6 +20,8 @@ __all__ = [
     "Base",
     "CollaborationRequest",
     "DeliveryVersion",
+    "DeliveryStateTransition",
+    "DeliveryWorkflow",
     "DraftConfirmation",
     "Event",
     "Invitation",

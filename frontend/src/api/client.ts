@@ -1,3 +1,5 @@
+import type { DeliveryReviewStatus } from './types'
+
 export class ApiError extends Error {
   constructor(public readonly status: number, message: string) { super(message) }
 }
@@ -36,4 +38,7 @@ export function localDate(value: string | null): string {
 export function utcDate(value: string): string | null { return value ? new Date(value).toISOString() : null }
 export const stageLabels: Record<string, string> = {not_started:'未开始', planning:'方案设计中', writing:'内容输出中', checking:'内容自查中', submitted:'已提交'}
 export const requestLabels: Record<string, string> = {open:'待接手',accepted:'已接手',responded:'待发起人确认',resolved:'已解决'}
+export const reviewStatusLabels: Record<DeliveryReviewStatus, string> = {ai_reviewing:'AI审核中',ai_review_partial_failure:'AI审核中（部分失败）',returned:'已退回',pending_final_review:'待终审',adopted:'已采用',final_returned:'终审退回'}
+export function reviewStatusText(status: DeliveryReviewStatus|null|undefined): string { return status ? reviewStatusLabels[status] : '未开始审核' }
+export const reviewPendingNotice = '等待后台审核接入，尚未生成审核结论。'
 export function sizeText(size: number): string { return size < 1024 ? `${size} B` : size < 1048576 ? `${(size/1024).toFixed(1)} KB` : `${(size/1048576).toFixed(1)} MB` }

@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -10,10 +11,13 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base
 from app.models.immutable import protect_snapshot
+
+if TYPE_CHECKING:
+    from app.models.review_workflow import DeliveryWorkflow
 
 
 class DeliveryVersion(Base):
@@ -52,6 +56,14 @@ class DeliveryVersion(Base):
     ai_participation: Mapped[str] = mapped_column(String(16))
     ai_note: Mapped[str] = mapped_column(String(2000))
     handoff_note: Mapped[str] = mapped_column(String(10000))
+
+    review_workflow: Mapped["DeliveryWorkflow | None"] = relationship(
+        lazy="selectin", viewonly=True, uselist=False
+    )
+
+    @property
+    def review_status(self) -> str | None:
+        return self.review_workflow.state if self.review_workflow is not None else None
 
 
 class SharedMaterial(Base):

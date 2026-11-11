@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from app.schemas.review_state import ReviewState
+
 AIParticipation = Literal["none", "assisted", "primary"]
 
 
@@ -40,6 +42,7 @@ class DeliveryVersionInfo(BaseModel):
     ai_note: str
     handoff_note: str
     status: Literal["submitted"] = "submitted"
+    review_status: ReviewState | None = None
     download_url: str = ""
 
 
