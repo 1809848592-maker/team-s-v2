@@ -246,3 +246,21 @@ def load_citation_instruction(stage: str) -> InstructionBundle:
         return bundle
     except (OSError, ValueError, TypeError, OverflowError, RecursionError):
         raise ReviewerInstructionError from None
+
+
+def load_reasoning_instruction(reviewer: str) -> InstructionBundle:
+    """固定两个平台审核员，共用有界意见关联结构。"""
+    from app.review.reviewers.reasoning_types import ReasoningOutput
+
+    try:
+        if not isinstance(reviewer, str) or reviewer not in {"logic", "linkage"}:
+            raise ValueError
+        resource = resources.files("app.review.reviewers").joinpath("resources", f"{reviewer}.toml")
+        with resource.open("rb") as stream:
+            data = stream.read(MAX_INSTRUCTION_BYTES + 1)
+        bundle = _parse(data, output_model=ReasoningOutput)
+        if bundle.reviewer != reviewer or bundle.version != "2026-11-12.1":
+            raise ValueError
+        return bundle
+    except (OSError, ValueError, TypeError, OverflowError, RecursionError):
+        raise ReviewerInstructionError from None
