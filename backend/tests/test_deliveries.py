@@ -399,11 +399,25 @@ def test_new_submissions_bind_latest_plan_and_spec_without_changing_old_versions
     assert second["plan_version_id"] == new_plan["id"] != first["plan_version_id"]
     assert second["spec_version_id"] == new_spec["id"] != first["spec_version_id"]
     versions = team.member.get(delivery_path(team)).json()
-    assert next(item for item in versions if item["id"] == first["id"]) == first
+    historical = next(item for item in versions if item["id"] == first["id"])
+    # 交付快照不变；动态绑定视图随项目发布更新，不属于原文件快照。
+    assert {key: value for key, value in historical.items() if key != "version_binding"} == {
+        key: value for key, value in first.items() if key != "version_binding"
+    }
+    assert historical["version_binding"]["plan_outdated"]
+    assert historical["version_binding"]["spec_outdated"]
     assert first["plan_version_id"] == team.plan["id"]
     assert first["spec_version_id"] == team.spec["id"]
     assert team.member.get(first["download_url"]).content == b"first-submission"
-    publish_modules(team, [], "移除当前分工模块")
-    assert team.member.get(delivery_path(team)).json() == versions
+    removed_plan = publish_modules(team, [], "移除当前分工模块")
+    archived = team.member.get(delivery_path(team)).json()
+    assert [
+        {key: value for key, value in item.items() if key != "version_binding"} for item in archived
+    ] == [
+        {key: value for key, value in item.items() if key != "version_binding"} for item in versions
+    ]
+    assert all(
+        item["version_binding"]["latest_plan_version_id"] == removed_plan["id"] for item in archived
+    )
     assert team.member.get(first["download_url"]).content == b"first-submission"
     assert upload_delivery(team.member, team).status_code == 404

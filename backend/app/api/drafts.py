@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.api.auth import require_csrf, require_user
-from app.api.deliveries import delivery_error, delivery_info
+from app.api.deliveries import delivery_error, delivery_infos
 from app.db import get_session
 from app.models.auth import User
 from app.schemas.agent_drafts import AgentDraftView, DraftConfirm
@@ -126,4 +126,4 @@ def confirm_draft(
     except ERRORS as error:
         raise draft_error(error) from None
     response.headers["Cache-Control"] = "no-store"
-    return delivery_info(item)
+    return delivery_infos(db, [item], user.id)[0]

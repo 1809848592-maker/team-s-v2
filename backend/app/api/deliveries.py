@@ -12,7 +12,8 @@ from app.db import get_session
 from app.models import User
 from app.models.delivery import DeliveryVersion, SharedMaterial
 from app.schemas.deliveries import DeliverySubmit, DeliveryVersionInfo, SharedMaterialInfo
-from app.services import deliveries, projects
+from app.schemas.version_binding import ResubmissionRequest, VersionBindingInfo
+from app.services import deliveries, projects, version_binding
 from app.storage import LocalStorage, UploadTooLargeError
 
 router = APIRouter(tags=["deliveries"])
@@ -20,15 +21,28 @@ Database = Annotated[Session, Depends(get_session)]
 CurrentUser = Annotated[User, Depends(require_user)]
 
 
-def delivery_info(item: DeliveryVersion) -> DeliveryVersionInfo:
+def delivery_info(
+    item: DeliveryVersion, binding: VersionBindingInfo | None = None
+) -> DeliveryVersionInfo:
     return DeliveryVersionInfo.model_validate(item).model_copy(
         update={
+            "version_binding": binding,
             "download_url": (
                 f"/api/projects/{item.project_id}/modules/{item.module_id}"
                 f"/deliveries/{item.id}/download"
-            )
+            ),
         }
     )
+
+
+def delivery_infos(
+    db: Session, items: list[DeliveryVersion], user_id: UUID
+) -> list[DeliveryVersionInfo]:
+    if not items:
+        return []
+    member = projects.require_member(db, items[0].project_id, user_id)
+    bindings = version_binding.binding_info(db, items, leader=member.role == "leader")
+    return [delivery_info(item, bindings[item.id]) for item in items]
 
 
 def material_info(item: SharedMaterial) -> SharedMaterialInfo:
@@ -96,7 +110,7 @@ def submit_delivery(
     ) as error:
         raise delivery_error(error) from None
     response.headers["Cache-Control"] = "no-store"
-    return delivery_info(item)
+    return delivery_infos(db, [item], user.id)[0]
 
 
 @router.get(
@@ -111,7 +125,7 @@ def module_deliveries(
     except (projects.ProjectError, deliveries.DeliveryNotFoundError) as error:
         raise delivery_error(error) from None
     response.headers["Cache-Control"] = "no-store"
-    return [delivery_info(item) for item in items]
+    return delivery_infos(db, items, user.id)
 
 
 @router.get("/projects/{project_id}/deliveries", response_model=list[DeliveryVersionInfo])
@@ -123,7 +137,30 @@ def project_deliveries(
     except projects.ProjectError as error:
         raise delivery_error(error) from None
     response.headers["Cache-Control"] = "no-store"
-    return [delivery_info(item) for item in items]
+    return delivery_infos(db, items, user.id)
+
+
+@router.post(
+    "/projects/{project_id}/deliveries/{delivery_id}/resubmission-requests",
+    response_model=DeliveryVersionInfo,
+    dependencies=[Depends(require_csrf)],
+)
+def request_resubmission(
+    project_id: UUID,
+    delivery_id: UUID,
+    body: ResubmissionRequest,
+    user: CurrentUser,
+    db: Database,
+    response: Response,
+) -> DeliveryVersionInfo:
+    try:
+        item = version_binding.request_resubmission(db, project_id, delivery_id, user.id, body)
+    except version_binding.ResubmissionConflictError as error:
+        raise HTTPException(409, str(error), headers={"Cache-Control": "no-store"}) from None
+    except (projects.ProjectError, deliveries.DeliveryNotFoundError) as error:
+        raise delivery_error(error) from None
+    response.headers["Cache-Control"] = "no-store"
+    return delivery_infos(db, [item], user.id)[0]
 
 
 def _file_response(item: DeliveryVersion | SharedMaterial, request: Request) -> FileResponse:

@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ApiError, api, dateText, errorText, projectPath, sizeText, stageLabels } from '../api/client'
 import type { Delivery, DraftView, Material, Member, Module, ModuleProgress, Progress } from '../api/types'
 import DeliveryReviewStatus from './DeliveryReviewStatus.vue'
+import DeliveryVersionBinding from './DeliveryVersionBinding.vue'
 import { useReviewPolling } from '../composables/useReviewPolling'
 
 const props = defineProps<{ projectId: string; members: Member[]; accountId: string; initialModuleId?: string }>()
@@ -14,6 +15,7 @@ const draftAi = ref(''), draftAiNote = ref('')
 const selectedId = ref(''), loading = ref(false), historyLoading = ref(false)
 const loadError = ref(''), historyError = ref(''), actionError = ref(''), notice = ref('')
 const reportBusy = ref(false), deliveryBusy = ref(false), materialBusy = ref(false)
+const requestingResubmissionId = ref('')
 const stage = ref('planning'), summary = ref(''), ai = ref(''), aiNote = ref(''), handoff = ref('')
 const deliveryFile = ref<File | null>(null), materialFile = ref<File | null>(null)
 const deliveryInput = ref<HTMLInputElement | null>(null), materialInput = ref<HTMLInputElement | null>(null)
@@ -27,7 +29,7 @@ const ownDrafts = computed(() => drafts.value.filter(item => item.owner_id === p
 const pendingDrafts = computed(() => ownDrafts.value.filter(item => item.status === 'pending_confirmation'))
 const confirmedDrafts = computed(() => ownDrafts.value.filter(item => item.status === 'confirmed'))
 const canReport = computed(() => currentModule.value?.assignee_ids.includes(props.accountId) ?? false)
-const busy = computed(() => reportBusy.value || deliveryBusy.value || materialBusy.value || !!confirmingDraftId.value)
+const busy = computed(() => reportBusy.value || deliveryBusy.value || materialBusy.value || !!confirmingDraftId.value || !!requestingResubmissionId.value)
 const { error: reviewError, refreshing: reviewRefreshing, retry: retryReview } = useReviewPolling({
   contextKey: () => `${props.projectId}:${props.accountId}:${selectedId.value}`,
   projectId: () => props.projectId,
@@ -135,6 +137,26 @@ async function confirmDraft(draft: DraftView) {
     if (error instanceof ApiError && error.status === 409) { await load(); if (current(owner)) emit('changed') }
   } finally { if (current(owner)) confirmingDraftId.value = '' }
 }
+async function requestResubmission(delivery: Delivery) {
+  const binding = delivery.version_binding
+  if (busy.value || loading.value || !binding?.can_request_resubmission) return
+  const owner = context()
+  requestingResubmissionId.value = delivery.id; actionError.value = ''; notice.value = ''
+  try {
+    await api<Delivery>(`${projectPath(owner.projectId)}/deliveries/${encodeURIComponent(delivery.id)}/resubmission-requests`, {
+      expected_plan_version_id: binding.latest_plan_version_id,
+      expected_spec_version_id: binding.latest_spec_version_id,
+    })
+    if (!current(owner)) return
+    notice.value = '重新提交要求已记录，提交人会收到站内通知。'
+    await load(); if (current(owner)) emit('changed')
+  } catch (error) {
+    if (!current(owner)) return
+    actionError.value = error instanceof ApiError && error.status === 409
+      ? '方案、规范或交付状态已有更新，请核对刷新后的版本再操作。' : errorText(error)
+    if (error instanceof ApiError && error.status === 409) { await load(); if (current(owner)) emit('changed') }
+  } finally { if (current(owner)) requestingResubmissionId.value = '' }
+}
 async function uploadMaterial() {
   if (loading.value || busy.value || !materialFile.value) return
   const owner = context()
@@ -164,6 +186,7 @@ watch(() => [props.projectId, props.accountId], () => {
   selectedId.value = ''; reports.value = []; materialFile.value = null
   selectedDraftId.value = ''; draftAi.value = ''; draftAiNote.value = ''; confirmingDraftId.value = ''
   reportBusy.value = false; deliveryBusy.value = false; materialBusy.value = false
+  requestingResubmissionId.value = ''
   actionError.value = ''; notice.value = ''; historyError.value = ''
   if (materialInput.value) materialInput.value.value = ''
   void load()
@@ -226,10 +249,10 @@ onBeforeUnmount(() => { mounted = false; ++contextSequence; ++loadSequence; ++hi
         </form>
       </div>
       <p v-else class="muted">只有该模块的负责人可以回报进度、提交正式交付。</p>
-      <section class="subsection" aria-labelledby="delivery-history-title"><h3 id="delivery-history-title">正式交付版本</h3><p v-if="!currentDeliveries.length" class="empty">该任务还没有正式交付。</p><div class="stack"><article v-for="delivery in currentDeliveries" :key="delivery.id" class="record"><div class="toolbar"><a :href="delivery.download_url" download>{{ delivery.filename }}</a><span class="tag">v{{ delivery.version }} · 已提交</span></div><DeliveryReviewStatus :status="delivery.review_status" :progress="delivery.review_progress" /><p class="muted">{{ name(delivery.submitted_by) }} · {{ dateText(delivery.submitted_at) }} · {{ sizeText(delivery.size) }}</p><p>{{ aiLabels[delivery.ai_participation] }}<span v-if="delivery.ai_note">：{{ delivery.ai_note }}</span></p><p v-if="delivery.handoff_note" class="pre-wrap">交接说明：{{ delivery.handoff_note }}</p><details><summary>绑定版本与文件校验</summary><dl class="binding-grid"><dt>方案版本</dt><dd>{{ delivery.plan_version_id }}</dd><dt>规范版本</dt><dd>{{ delivery.spec_version_id }}</dd><dt>SHA256</dt><dd>{{ delivery.sha256 }}</dd></dl></details></article></div></section>
+      <section class="subsection" aria-labelledby="delivery-history-title"><h3 id="delivery-history-title">正式交付版本</h3><p v-if="!currentDeliveries.length" class="empty">该任务还没有正式交付。</p><div class="stack"><article v-for="delivery in currentDeliveries" :key="delivery.id" class="record"><div class="toolbar"><a :href="delivery.download_url" download>{{ delivery.filename }}</a><span class="tag">v{{ delivery.version }} · 已提交</span></div><DeliveryReviewStatus :status="delivery.review_status" :progress="delivery.review_progress" /><DeliveryVersionBinding :delivery="delivery" :members="members" :disabled="busy || loading" :requesting="requestingResubmissionId === delivery.id" @request="requestResubmission(delivery)" /><p class="muted">{{ name(delivery.submitted_by) }} · {{ dateText(delivery.submitted_at) }} · {{ sizeText(delivery.size) }}</p><p>{{ aiLabels[delivery.ai_participation] }}<span v-if="delivery.ai_note">：{{ delivery.ai_note }}</span></p><p v-if="delivery.handoff_note" class="pre-wrap">交接说明：{{ delivery.handoff_note }}</p><details><summary>绑定版本与文件校验</summary><dl class="binding-grid"><dt>方案版本</dt><dd>{{ delivery.plan_version_id }}</dd><dt>规范版本</dt><dd>{{ delivery.spec_version_id }}</dd><dt>SHA256</dt><dd>{{ delivery.sha256 }}</dd></dl></details></article></div></section>
       <details class="subsection progress-history"><summary>全部进度记录</summary><p v-if="historyLoading" class="muted" role="status">正在读取进度…</p><p v-if="historyError" class="error" role="alert">{{ historyError }} <button class="btn quiet" @click="loadHistory()">重试</button></p><p v-if="!reports.length && !historyLoading && !historyError" class="empty">还没有进度记录。</p><ol class="report-list"><li v-for="item in reports" :key="item.id"><strong>{{ stageLabels[item.stage] }}</strong><p class="pre-wrap">{{ item.summary }}</p><span class="muted">{{ progressSource(item) }} · {{ dateText(item.created_at) }}</span></li></ol></details>
     </template>
-    <details v-if="archivedDeliveries.length" class="subsection"><summary>已移除模块的历史交付（{{ archivedDeliveries.length }}）</summary><article v-for="delivery in archivedDeliveries" :key="delivery.id" class="record archived-delivery"><div class="toolbar"><a :href="delivery.download_url" download>{{ delivery.filename }}</a><span class="tag">v{{ delivery.version }} · 已提交</span></div><DeliveryReviewStatus :status="delivery.review_status" :progress="delivery.review_progress" /><p class="muted">模块 {{ delivery.module_id }} · {{ name(delivery.submitted_by) }} · {{ dateText(delivery.submitted_at) }}</p><p>{{ aiLabels[delivery.ai_participation] }}<span v-if="delivery.ai_note">：{{ delivery.ai_note }}</span></p><p v-if="delivery.handoff_note" class="pre-wrap">交接说明：{{ delivery.handoff_note }}</p><p class="muted binding-text">方案 {{ delivery.plan_version_id }} · 规范 {{ delivery.spec_version_id }}</p></article></details>
+    <details v-if="archivedDeliveries.length" class="subsection"><summary>已移除模块的历史交付（{{ archivedDeliveries.length }}）</summary><article v-for="delivery in archivedDeliveries" :key="delivery.id" class="record archived-delivery"><div class="toolbar"><a :href="delivery.download_url" download>{{ delivery.filename }}</a><span class="tag">v{{ delivery.version }} · 已提交</span></div><DeliveryReviewStatus :status="delivery.review_status" :progress="delivery.review_progress" /><DeliveryVersionBinding :delivery="delivery" :members="members" :disabled="busy || loading" :requesting="requestingResubmissionId === delivery.id" @request="requestResubmission(delivery)" /><p class="muted">模块 {{ delivery.module_id }} · {{ name(delivery.submitted_by) }} · {{ dateText(delivery.submitted_at) }}</p><p>{{ aiLabels[delivery.ai_participation] }}<span v-if="delivery.ai_note">：{{ delivery.ai_note }}</span></p><p v-if="delivery.handoff_note" class="pre-wrap">交接说明：{{ delivery.handoff_note }}</p><p class="muted binding-text">方案 {{ delivery.plan_version_id }} · 规范 {{ delivery.spec_version_id }}</p></article></details>
     <section class="subsection materials" aria-labelledby="material-title"><div class="panel-heading"><div><h3 id="material-title">共享材料</h3><p class="muted">供全体项目成员查阅，与正式交付分开保存。</p></div></div><form class="material-form" @submit.prevent="uploadMaterial"><div class="field"><label for="material-file">上传共享材料</label><input id="material-file" ref="materialInput" type="file" required :disabled="busy || loading" @change="materialFile = fileFrom($event)"></div><button class="btn" :disabled="busy || loading || !materialFile">{{ materialBusy ? '正在上传…' : '上传材料' }}</button></form><p v-if="!materials.length && !loading && !loadError" class="empty">还没有共享材料，项目成员均可上传。</p><ul class="material-list"><li v-for="material in materials" :key="material.id"><a :href="material.download_url" download>{{ material.filename }}</a><span class="muted">{{ name(material.uploaded_by) }} · {{ dateText(material.uploaded_at) }} · {{ sizeText(material.size) }}</span></li></ul></section>
   </section>
 </template>

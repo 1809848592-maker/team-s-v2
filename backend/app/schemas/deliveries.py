@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.schemas.review_jobs import ReviewProgress
 from app.schemas.review_state import ReviewState
+from app.schemas.version_binding import VersionBindingInfo
 
 AIParticipation = Literal["none", "assisted", "primary"]
 
@@ -46,6 +47,7 @@ class DeliveryVersionInfo(BaseModel):
     review_status: ReviewState | None = None
     review_progress: ReviewProgress | None = None
     download_url: str = ""
+    version_binding: VersionBindingInfo | None = None
 
 
 class SharedMaterialInfo(BaseModel):

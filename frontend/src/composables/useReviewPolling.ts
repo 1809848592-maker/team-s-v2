@@ -44,7 +44,7 @@ export function useReviewPolling(options: ReviewPollingOptions) {
       // Polling must never replace forms, file selections, or the delivery collection.
       options.deliveries.value = options.deliveries.value.map(item => {
         const next = byId.get(item.id)
-        return next ? { ...item, review_status: next.review_status, review_progress: next.review_progress } : item
+        return next ? { ...item, review_status: next.review_status, review_progress: next.review_progress, version_binding: next.version_binding } : item
       })
       error.value = ''; failures = 0; blocked = false
     } catch (cause) {

@@ -511,7 +511,15 @@ def test_terminal_version_remains_fixed_while_resubmission_starts_independent_la
         assert persisted_snapshot(db, first["id"]) == snapshot
     listed = team.member.get(delivery_path(team)).json()
     old_view = next(item for item in listed if item["id"] == first["id"])
-    assert old_view == {**first, "review_status": terminal}
+    assert {key: value for key, value in old_view.items() if key != "version_binding"} == {
+        **{key: value for key, value in first.items() if key != "version_binding"},
+        "review_status": terminal,
+    }
+    assert old_view["version_binding"]["bound_plan_version"] == 1
+    assert old_view["version_binding"]["bound_spec_version"] == 1
+    assert old_view["version_binding"]["latest_plan_version_id"] == latest_plan["id"]
+    assert old_view["version_binding"]["latest_spec_version_id"] == latest_spec["id"]
+    assert old_view["version_binding"]["based_on_old_version"] is (terminal == "adopted")
     assert team.member.get(first["download_url"]).content == b"original terminal version"
 
 

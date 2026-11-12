@@ -19,7 +19,7 @@
 - **M1 已由发起人于 2026-11-10 验收通过，方案制定者独立复核确认：10组验收及78项后端测试通过。**
 - 按发起人最新授权，开始M2，顺序完成M2-01至M2-07，每项独立测试/提交，最终验收后停下。
 - M2-01至M2-07均已实现、测试并独立提交；发起人于2026-11-11验收通过，方案制定者独立复核12组验收、129项后端测试及外部越权探测401。
-- M3-01至M3-11均已实现、通过各项验证并逐项提交；下一项为M3-12“版本绑定”。按AGENTS.md每次完成一个任务，M3全阶段结束后实际运行验收脚本并停下等待验收。
+- M3-01至M3-12均已实现、通过各项验证并逐项提交；下一项为M3-13“数据外发告知与管理员用量页”。按AGENTS.md每次完成一个任务，M3全阶段结束后实际运行验收脚本并停下等待验收。
 
 ## M1-01：工程骨架（2026-11-10）
 
@@ -439,3 +439,17 @@ colima stop teams-m1
 - 隔离M3 Compose 18002最终镜像build及`up --wait`通过，`0017_final_review(head)`、`alembic check`无漂移，health ok，web/PG healthy、worker运行。最终镜像内 **6组冒烟全通过**：唯一leader自审、多leader禁自审且另一人单笔采用、标注hash陈旧及规范驳回自动退回、实际HTTP角色/CSRF/负责人所属智能体带与不带Cookie的通过/退回/规范驳回共6次403审计、迟到事件回滚与退回新版本重新审核、不可变触发器/原文件/零模型账本/事件隐私。9个源码/迁移hash与工作区相同，最终stderr空，临时schema复查无残留，真实模型/外部API/socket尝试均0。初轮验证fixture关闭Session后读取lazy状态触发DetachedInstanceError，改为活动Session查询后6组完整重跑通过，未为验证改产品源码。镜像`sha256:b1e02bba1806d5302e2e4a19fa080648af3cbb0c5aedd4bbf105d4ae3e755214`。
 - 证据：`.verification/M3-11-targeted.log`、`M3-11-targeted-final.log`、`M3-11-project-lock-final.log`、`M3-11-pytest.log`、`M3-11-pytest-final.log`、`M3-11-build.log`、`M3-11-up.log`、`M3-11-container-smoke.json`、`M3-11-container-summary.json/.md`、`M3-11-source-comparison.json`、`M3-11-wheel.log`及`M3-11-wheel-verification.json`。所有代码/文档修改仅platform，未改v1或M1/M2/开发容器环境。无新增待裁定问题。
 - 本轮只完成M3-11并独立提交后停下；下一项M3-12“版本绑定”。M3最终验收尚未执行，真实DeepSeek仍只在该验收使用，Key不提交Git。
+
+## M3-12：版本绑定（2026-11-12）
+
+- 核对并保留既有正式提交/本人确认草稿时的版本绑定：在项目锁内绑定当时最新方案、规范，全部审核服务及后台重试按不可变的绑定ID读取原依据。复用7项既有直接提交、草稿确认、格式/规范/文献/逻辑衔接及固定模型流水线回归，验证发布后旧审核仍按原依据、新提交绑定最新版本。
+- 人类交付列表与提交/草稿确认响应新增动态`version_binding`，提供原绑定/最新版本号与ID、差异及负责人能否要求重交。已采用的旧交付显示“依据旧版方案 / 规范”，继续保持adopted；原文件、终审快照、审核任务和上游可读权限保持。正在审核中的旧交付说明继续按提交依据完成审核。按项目共享锁固定一次读取的最新版本对，不在发布时改写历史交付。
+- 新增`POST /api/projects/{project_id}/deliveries/{delivery_id}/resubmission-requests`及迁移`0018_version_binding`。仅当前项目负责人的人类会话可对依据旧版的已采用交付操作，模块负责人或平台管理员身份不能替代；核验页面所见最新版本对，陈旧请求409。项目→工作流锁，等锁后刷新角色；不可变重交记录、事件、提交人站内通知在同一事务提交，晚期失败完整回滚。不增加交付状态、不撤销采用、不自动重新审核、不扩大新版模块提交权限。
+- 工程选择：同一交付、同一目标方案/规范版本对的重复点击幂等，双负责人并发仅一笔记录/通知/事件；后续再次发布可针对新的版本对追加请求，原请求保留。列表展示最近请求及是否仍针对当前版本。模块被移除后保留历史绑定、请求和下载，新提交仍按当前方案检查权限。
+- 任务页和已移除模块历史复用`DeliveryVersionBinding`组件，负责人一键要求重交、显示请求人/时间、提交与409后刷新；看板显示旧版标记/请求摘要。轮询同步新绑定视图而不覆盖表单与文件选择，活动流和时间线增加中文操作名。HTTP Bearer即使同时携带本人Cookie且所属人是负责人也不能要求重交；MCP不提供该工具，拒绝并留痕`request_resubmission`，没有新增智能体写权限。
+- 新增**44项测试**：12项真实PG服务、32项HTTP/MCP；服务专项12 passed in 5.74s，额外7项既有绑定/固定模型流水线回归7 passed in 3.10s；API最终32 passed in 15.52s。覆盖方案/规范/双更新、幂等、权限与CSRF、陈旧页面、真实`pg_blocking_pids`项目锁等待后重新读取版本、缓存旧角色拒绝、晚期事件/通知失败回滚、ORM与原始PG UPDATE/DELETE/TRUNCATE不可变、重交最新绑定及旧采用版下游可读。最终完整后端 **1538 passed in 196.95s，无跳过、无警告**；只读独立复核未发现必修问题。
+- 如实记录初期失败：旧交付测试有两处将动态响应整体当作静态快照，前两轮专项分别1 failed/16 passed；首轮全量另有同类终态断言3 failed/1523 passed。已把交付不可变字段和动态绑定视图分别核验，保留完整快照与终态断言，并新增最新版本/旧版标记断言，最终全量全部通过。初始Ruff在格式化前报告长行，格式化和换行后全库190文件格式、Ruff、依赖锁及diff检查通过。
+- 前端vue-tsc与Vite生产构建通过。环境原无npm PATH，尝试bundled pnpm包装器曾触发本地依赖重建并因ignored-build返回1，随后直接使用bundled Node完成类型检查与构建；额外pnpm锁/配置已移除，原package文件未变。Playwright使用真实HTTP、独立PG schema和同构建静态文件（18003，无worker自动模型调用）完成**5组浏览器流程**：看板旧版标记、真实并发发布后的409及刷新、负责人一键要求重交、成员通知与无操作按钮、重交最新版本且旧版继续采用/下载。控制台错误0，截图已人工查看。临时服务停止后Uvicorn重发SIGTERM早于fixture finalizer，已按唯一fixture项目ID核实并清理其独立schema，最终复查测试schema残留0。
+- 隔离M3 Compose（18002）build web/worker及`up --wait`成功，`0018_version_binding(head)`、Alembic无漂移，health ok、web/PG healthy、worker运行；9个后端源码/迁移及4个前端静态文件与工作区逐字节一致。镜像`sha256:d5f32eb14f7608e7daad9be5a6d7c22c68900cdd59101e9a8138809c5410ef17`。Compose显式`--env-file /dev/null`，真实模型开关false、容器Key为空；本项真实模型调用0，未读取/输出/提交platform/.env，未操作其他开发/M1/M2环境。
+- 说明见`deploy/VERSION_BINDING.md`。证据：`.verification/M3-12-service.log`、`M3-12-api.log`、`M3-12-baseline.log`、`M3-12-baseline-final.log`、`M3-12-pytest.log`、`M3-12-pytest-final.log`、`M3-12-build.log`、`M3-12-up.log`、`M3-12-container-summary.json/.md`、`M3-12-source-comparison.json`、`M3-12-browser.log`、`M3-12-browser-summary.json`、浏览器截图、`M3-12-browser-cleanup.json`及`M3-12-schema-cleanup.json`。所有修改仅platform，无新增待裁定问题。
+- 本轮只完成M3-12并独立提交后停下；下一项M3-13。M3剩余顺序为M3-13、M3-15、M3-14；最终验收尚未执行，真实DeepSeek仍仅用于M3验收，Key不提交Git。
