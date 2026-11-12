@@ -137,6 +137,9 @@ def reserve_call(
             )
             if job is None:
                 raise LLMUsageError("正式交付审核任务不存在")
+            from app.services.model_disclosure import require_review_consent
+
+            require_review_consent(db, project_id)
             current = _now(db)
             day = current.date()
             retry_at = datetime.combine(day + timedelta(days=1), datetime.min.time(), UTC)

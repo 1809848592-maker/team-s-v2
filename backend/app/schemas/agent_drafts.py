@@ -49,6 +49,7 @@ class DraftConfirm(BaseModel):
 
     ai_participation: AIParticipation
     ai_note: str = Field(default="", max_length=2000)
+    disclosure_version: str | None = Field(default=None, min_length=1, max_length=80)
 
     @field_validator("ai_note")
     @classmethod

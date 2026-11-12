@@ -25,7 +25,17 @@ def register(client: TestClient, username: str):
 
 
 def create_project(client: TestClient, name: str = "科研协作项目"):
-    response = client.post("/api/projects", json={"name": name}, headers=CSRF_HEADERS)
+    from app.services.model_disclosure import DISCLOSURE_VERSION
+
+    response = client.post(
+        "/api/projects",
+        json={
+            "name": name,
+            "data_transfer_consent": True,
+            "disclosure_version": DISCLOSURE_VERSION,
+        },
+        headers=CSRF_HEADERS,
+    )
     assert response.status_code == 201
     return response.json()
 

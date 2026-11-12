@@ -26,6 +26,10 @@ def _human_action(request: Request) -> str:
     route_path = getattr(request.scope.get("route"), "path", "")
     if request.method not in _WRITE_METHODS:
         return "human_route"
+    if route_path.startswith("/api/admin/"):
+        return "admin_usage"
+    if route_path.endswith("/model-consent"):
+        return "consent_model_data_transfer"
     if "/plan" in route_path.split("/projects/{project_id}")[-1]:
         return "publish_plan"
     if route_path.endswith("/spec/versions"):

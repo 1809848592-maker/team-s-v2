@@ -144,7 +144,7 @@ def test_submission_queue_workflow_and_events_wait_for_caller_commit_and_rollbac
             UUID(team.member_id),
             "transaction.md",
             BytesIO(b"transactional queue bytes"),
-            {"ai_participation": "none"},
+            {"ai_participation": "none", "disclosure_version": "deepseek-2026-11-12.1"},
             storage=LocalStorage(settings.storage_dir),
             max_bytes=settings.upload_max_bytes,
             commit=False,

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Account } from '../api/auth'
-import { api, dateText, errorText, isPlatformReviewWorker, projectPath, requestLabels, reviewJobEventLabels, reviewStatusText, stageLabels } from '../api/client'
-import type { Project, Member, Module, ModuleProgress, Progress, Delivery, DraftView, CollaborationRequest, Notification, ProjectEvent } from '../api/types'
+import { ApiError, api, dateText, errorText, isPlatformReviewWorker, projectPath, requestLabels, reviewJobEventLabels, reviewStatusText, stageLabels } from '../api/client'
+import type { Project, Member, Module, ModuleProgress, Progress, Delivery, DraftView, CollaborationRequest, Notification, ProjectEvent, ModelDisclosure } from '../api/types'
 import PlanPanel from './PlanPanel.vue'
 import SpecPanel from './SpecPanel.vue'
 import TaskPanel from './TaskPanel.vue'
@@ -11,6 +11,8 @@ import EventTimeline from './EventTimeline.vue'
 import AgentPanel from './AgentPanel.vue'
 import DeliveryReviewStatus from './DeliveryReviewStatus.vue'
 import DeliveryVersionBinding from './DeliveryVersionBinding.vue'
+import ModelDisclosureNotice from './ModelDisclosureNotice.vue'
+import AdminUsagePanel from './AdminUsagePanel.vue'
 import { useReviewPolling } from '../composables/useReviewPolling'
 const props = defineProps<{account:Account;busy:boolean;logoutError?:string}>()
 defineEmits<{logout:[]}>()
@@ -19,6 +21,8 @@ const progress = ref<ModuleProgress[]>([]), deliveries = ref<Delivery[]>([]), re
 const drafts = ref<DraftView[]>([])
 const error = ref(''), notice = ref(''), loading = ref(true), acting = ref(false), projectName = ref('')
 const inviteRole = ref<'member'|'leader'>('member'), inviteLink = ref(''), showMembers = ref(false), showNotifications = ref(false)
+const modelDisclosure = ref<ModelDisclosure | null>(null), disclosureError = ref(''), disclosureLoading = ref(false), creationConsent = ref(false)
+let disclosureSequence = 0
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') ?? '')
 const tabs = [{key:'board',label:'项目看板'},{key:'plan',label:'方案与分工'},{key:'spec',label:'规范与模板'},{key:'tasks',label:'任务与交付'},{key:'requests',label:'协作需求'},{key:'agents',label:'我的智能体'},{key:'timeline',label:'时间线'}] as const
 const tab = ref<string>('board')
@@ -48,7 +52,7 @@ function eventActor(event:ProjectEvent) {
   const agent = progress.value.map(item=>item.last_report).find(item=>item?.agent_id===event.actor_id) ?? drafts.value.find(item=>item.agent_id===event.actor_id) ?? requests.value.flatMap(item=>item.messages).find(item=>item.agent_id===event.actor_id)
   return `${agent?.agent_name || '智能体'} 代表 ${event.represented_user_id ? name(event.represented_user_id) : '所属人'}`
 }
-const activityLabels: Record<string,string> = {...reviewJobEventLabels,project_created:'创建项目',invitation_created:'创建邀请',member_joined:'加入项目',plan_published:'发布方案',module_updated:'更新分工',spec_published:'发布规范',template_uploaded:'上传模板',delivery_submitted:'提交交付',delivery_resubmission_requested:'要求重新提交交付',delivery_review_started:'开始交付审核',delivery_review_state_changed:'更新交付审核状态',agent_registered:'登记智能体',agent_revoked:'吊销智能体令牌',agent_draft_uploaded:'上传交付稿',agent_draft_confirmed:'确认交付稿',material_uploaded:'上传共享材料',progress_reported:'回报进度',request_created:'发起需求',request_accepted:'接手需求',request_responded:'回应需求',request_supplemented:'补充需求',request_resolved:'确认解决',notification_read:'阅读通知'}
+const activityLabels: Record<string,string> = {...reviewJobEventLabels,project_created:'创建项目',model_data_transfer_consented:'同意审核数据外发',submission_data_transfer_disclosed:'阅读首次交付外发告知',llm_project_quota_updated:'调整项目审核额度',invitation_created:'创建邀请',member_joined:'加入项目',plan_published:'发布方案',module_updated:'更新分工',spec_published:'发布规范',template_uploaded:'上传模板',delivery_submitted:'提交交付',delivery_resubmission_requested:'要求重新提交交付',delivery_review_started:'开始交付审核',delivery_review_state_changed:'更新交付审核状态',agent_registered:'登记智能体',agent_revoked:'吊销智能体令牌',agent_draft_uploaded:'上传交付稿',agent_draft_confirmed:'确认交付稿',material_uploaded:'上传共享材料',progress_reported:'回报进度',request_created:'发起需求',request_accepted:'接手需求',request_responded:'回应需求',request_supplemented:'补充需求',request_resolved:'确认解决',notification_read:'阅读通知'}
 function refreshProject() { ++agentPageVersion.value; void loadProject() }
 async function loadProject() {
   const pid = selected.value, accountId = props.account.id, sequence = ++serial
@@ -84,11 +88,29 @@ async function loadProjects(preferred?:string) {
     await loadProject()
   } catch(e) {if(mounted && accountId===props.account.id){error.value=errorText(e);loading.value=false}}
 }
+async function loadDisclosure() {
+  const owner = ++disclosureSequence, accountId = props.account.id
+  disclosureLoading.value = true; disclosureError.value = ''
+  try { const result = await api<ModelDisclosure>('/api/model-disclosure'); if(mounted && owner === disclosureSequence && accountId === props.account.id) modelDisclosure.value = result }
+  catch(cause) { if(mounted && owner === disclosureSequence && accountId === props.account.id) disclosureError.value = errorText(cause) }
+  finally { if(mounted && owner === disclosureSequence && accountId === props.account.id) disclosureLoading.value = false }
+}
 async function createProject() {
-  if(acting.value) return
+  if(acting.value || !modelDisclosure.value || disclosureLoading.value) return
+  const accountId = props.account.id
+  const currentAccount = () => mounted && accountId === props.account.id
   acting.value=true;error.value='';notice.value=''
-  try {const project=await api<Project>('/api/projects',{name:projectName.value});projectName.value='';tab.value='board';await loadProjects(project.id);notice.value='项目已创建。可以先邀请成员，再发布方案与分工。'}
-  catch(e){error.value=errorText(e)}finally{acting.value=false}
+  try {
+    const project=await api<Project>('/api/projects',{name:projectName.value,data_transfer_consent:creationConsent.value,disclosure_version:modelDisclosure.value.version})
+    if(!currentAccount()) return
+    projectName.value='';creationConsent.value=false;tab.value='board'
+    await loadProjects(project.id)
+    if(currentAccount()) notice.value='项目已创建。可以先邀请成员，再发布方案与分工。'
+  } catch(cause) {
+    if(!currentAccount()) return
+    error.value=errorText(cause)
+    if(cause instanceof ApiError && cause.status===409) {creationConsent.value=false;await loadDisclosure()}
+  } finally {if(currentAccount()) acting.value=false}
 }
 async function createInvite() {
   if(acting.value) return
@@ -108,12 +130,12 @@ async function readNotification(notification:Notification) {
   try {await api(`/api/notifications/${notification.id}/read`,undefined,'POST');await loadProject()}
   catch(e){error.value=errorText(e)}finally{acting.value=false}
 }
-onMounted(()=>void loadProjects())
+onMounted(()=>{void loadProjects();void loadDisclosure()})
 watch(()=>props.account.id,()=>{
   ++serial; loadedId=''; drafts.value=[]; projects.value=[]; selected.value=''; members.value=[]; modules.value=[]; progress.value=[]; deliveries.value=[]; requests.value=[]; events.value=[]; notifications.value=[]
-  loading.value=true; void loadProjects()
+  loading.value=true;acting.value=false;modelDisclosure.value=null;creationConsent.value=false;tab.value='board';void loadDisclosure();void loadProjects()
 })
-onBeforeUnmount(()=>{mounted=false;++serial})
+onBeforeUnmount(()=>{mounted=false;++serial;++disclosureSequence})
 </script>
 <template>
 <div class="project-workspace">
@@ -121,14 +143,16 @@ onBeforeUnmount(()=>{mounted=false;++serial})
   <div class="app-layout">
     <aside class="project-sidebar" aria-label="项目导航"><p class="eyebrow">研究项目</p><label for="project-select" class="sr-only">切换项目</label><select id="project-select" v-model="selected" :disabled="loading || acting" @change="tab='board';loadProject()"><option v-if="!projects.length" value="">暂无项目</option><option v-for="project in projects" :key="project.id" :value="project.id">{{project.name}}</option></select>
       <nav v-if="current" aria-label="项目页面"><button v-for="item in tabs" :key="item.key" class="nav-button" :aria-current="tab===item.key?'page':undefined" @click="tab=item.key">{{item.label}}<span v-if="item.key==='requests' && todo.length" class="nav-count">{{todo.length}}</span><span v-if="item.key==='tasks' && pendingDrafts.length" class="nav-count">{{pendingDrafts.length}}</span></button></nav>
-      <form class="new-project-form" @submit.prevent="createProject"><label for="new-project-name">新建项目</label><input id="new-project-name" v-model="projectName" required maxlength="120" placeholder="例如：城市语言景观研究"><button class="btn" :disabled="acting || !projectName.trim()">创建项目</button></form>
+      <button v-if="account.is_admin" class="nav-button admin-entry" :aria-current="tab==='admin'?'page':undefined" @click="tab='admin'">模型用量与额度</button>
+      <form class="new-project-form" @submit.prevent="createProject"><label for="new-project-name">新建项目</label><input id="new-project-name" v-model="projectName" required maxlength="120" placeholder="例如：城市语言景观研究"><p v-if="disclosureLoading" class="muted" role="status">正在读取数据外发告知…</p><p v-if="disclosureError" class="error" role="alert">{{disclosureError}} <button type="button" class="btn quiet" :disabled="disclosureLoading" @click="loadDisclosure">重试告知</button></p><ModelDisclosureNotice v-if="modelDisclosure" :notice="modelDisclosure" compact/><label v-if="modelDisclosure" class="consent-checkbox"><input v-model="creationConsent" type="checkbox" :disabled="acting">我已阅读并同意向 DeepSeek 外发审核数据，启用本项目 AI 审核。</label><p class="muted creation-hint">可先创建项目，稍后由负责人确认；未同意前不启用 AI 审核。</p><button class="btn" :disabled="acting || !projectName.trim() || !modelDisclosure || disclosureLoading">创建项目</button></form>
       <p class="sidebar-note">人负责验证，<br>协作留下记录。</p>
     </aside>
     <main class="project-main">
       <p v-if="logoutError" class="error" role="alert">{{logoutError}}</p>
       <section v-if="inviteToken" class="invitation-banner"><div><strong>你收到了一份项目邀请</strong><p>以 {{account.username}} 的身份加入受邀项目。</p></div><button class="btn primary" :disabled="acting" @click="acceptInvite">接受邀请并加入</button></section>
       <p v-if="error" class="error status-banner" role="alert">{{error}} <button class="btn quiet" :disabled="loading" @click="loadProjects()">重新加载</button></p><p v-if="notice" class="notice" role="status">{{notice}}</p>
-      <template v-if="current">
+      <AdminUsagePanel v-if="account.is_admin && tab==='admin'" :key="account.id" :account-id="account.id"/>
+      <template v-if="current && tab!=='admin'">
         <div class="project-heading"><div><p class="eyebrow">{{leader?'项目负责人':'项目成员'}}</p><h1>{{current.name}}</h1></div><div class="toolbar"><button class="btn quiet" :disabled="loading" @click="refreshProject">刷新</button><button class="btn" :aria-expanded="showMembers" @click="showMembers=!showMembers">成员与邀请 · {{members.length}}</button><button class="btn" :aria-expanded="showNotifications" @click="showNotifications=!showNotifications">站内通知{{unread.length?` · ${unread.length} 未读`:''}}</button></div></div>
         <section v-if="showMembers" class="panel members-panel" aria-labelledby="members-title"><div class="panel-heading"><h2 id="members-title">项目成员</h2><button class="btn quiet" @click="showMembers=false">收起成员</button></div><ul class="member-list"><li v-for="member in members" :key="member.user_id"><span>{{member.username}}</span><span class="tag">{{member.role==='leader'?'负责人':'组员'}}</span></li></ul><form v-if="leader" class="toolbar invite-form" @submit.prevent="createInvite"><div class="field"><label for="invite-role">邀请角色</label><select id="invite-role" v-model="inviteRole"><option value="member">组员</option><option value="leader">负责人</option></select></div><button class="btn primary" :disabled="acting">生成一次性邀请</button></form><div v-if="inviteLink" class="field invite-result"><label for="invite-link">邀请链接（单次使用）</label><input id="invite-link" :value="inviteLink" readonly @focus="($event.target as HTMLInputElement).select()"><span class="muted">复制链接后发送给受邀成员。每邀请一人生成一个新链接。</span></div></section>
         <section v-if="showNotifications" class="panel" aria-labelledby="notifications-title"><div class="panel-heading"><h2 id="notifications-title">站内通知</h2><button class="btn quiet" @click="showNotifications=false">收起通知</button></div><p v-if="!notifications.length" class="empty">暂时没有通知。</p><ul class="notification-list"><li v-for="notification in notifications" :key="notification.id" :class="{unread:!notification.read_at}"><div><p>{{notification.message}}</p><time>{{dateText(notification.created_at)}}</time></div><button v-if="!notification.read_at" class="btn quiet" :disabled="acting" @click="readNotification(notification)">标为已读</button><span v-else class="muted">已读</span></li></ul></section>
@@ -147,8 +171,12 @@ onBeforeUnmount(()=>{mounted=false;++serial})
         <AgentPanel v-if="tab==='agents'" :key="`${selected}:${agentPageVersion}`" :project-id="selected" :account-id="account.id" @changed="loadProject"/>
         <EventTimeline v-if="tab==='timeline'" :key="selected" :project-id="selected" :members="members" :modules="modules" :deliveries="deliveries" :leader="leader"/>
       </template>
-      <section v-else-if="!loading" class="panel welcome-panel"><p class="eyebrow">你的协作空间</p><h1>开始一个研究项目。</h1><p>从左侧创建项目，或使用负责人发来的邀请链接加入团队。</p></section>
+      <section v-else-if="!loading && tab!=='admin'" class="panel welcome-panel"><p class="eyebrow">你的协作空间</p><h1>开始一个研究项目。</h1><p>从左侧创建项目，或使用负责人发来的邀请链接加入团队。</p></section>
     </main>
   </div>
 </div>
 </template>
+
+<style scoped>
+.new-project-form>*{grid-column:1/-1}.consent-checkbox{display:flex;align-items:flex-start;gap:8px;font-size:12px;line-height:1.7}.consent-checkbox input{margin-top:5px;flex-shrink:0}.creation-hint{font-size:12px;line-height:1.7;margin:0}.admin-entry{margin-top:20px}
+</style>

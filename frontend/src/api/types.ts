@@ -22,3 +22,8 @@ export interface Notification {id:string;project_id:string;user_id:string;kind:s
 export interface ProjectEvent {id:number;occurred_at:string;project_id:string|null;actor_type:'human'|'agent';actor_id:string;represented_user_id:string|null;event_type:string;object_type:string;object_id:string;details:Record<string,unknown>;plan_version_id:string|null;spec_version_id:string|null;task_id:string|null}
 export interface AgentInfo {id:string;project_id:string;owner_id:string;name:string;client_type:string;created_at:string;revoked_at:string|null}
 export interface AgentCreated {agent:AgentInfo;token:string}
+export interface ModelDisclosure {version:string;provider:string;summary:string;uncertainty:string;terms_url:string;privacy_url:string;consent_required:boolean}
+export interface ProjectModelDisclosure {notice:ModelDisclosure;project_consent:null|{actor_id:string;accepted_at:string;disclosure_version:string};submission_acknowledged:boolean;can_consent:boolean}
+export interface UsageTotals {calls:number;measured_calls:number;unknown_usage_calls:number;unknown_cache_calls:number;unpriced_calls:number;prompt_tokens:number;completion_tokens:number;total_tokens:number;cache_hit_tokens:number;cache_miss_tokens:number;estimated_cost_cny:string}
+export interface AdminProject {id:string;name:string;daily_review_limit:number}
+export interface AdminUsage {start:string;end:string;timezone:'UTC';totals:UsageTotals;by_project:({project_id:string;project_name:string}&UsageTotals)[];by_reviewer:({reviewer:string}&UsageTotals)[];limits:{platform_daily_reviews:number;platform_daily_tokens:number;project_daily_reviews:number;max_calls_per_review:number}}

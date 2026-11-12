@@ -95,6 +95,9 @@ def submit_delivery(
     spec = get_latest_spec(db, project_id)
     if spec is None:
         raise DeliveryValidationError("请先发布团队规范，再提交正式交付")
+    from app.services.model_disclosure import record_submission_notice, validate_submission_notice
+
+    validate_submission_notice(db, project_id, user_id, submission.disclosure_version)
     previous_version = db.scalar(
         select(DeliveryVersion.version)
         .where(DeliveryVersion.project_id == project_id, DeliveryVersion.module_id == module_id)
@@ -119,6 +122,7 @@ def submit_delivery(
     )
     db.add(item)
     db.flush()
+    record_submission_notice(db, item)
     record_event(
         db,
         project_id=project_id,

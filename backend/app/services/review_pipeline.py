@@ -62,6 +62,11 @@ def execute_pipeline(sessions, review, *, storage, client, database_client) -> d
     from app.services.review_reports import stage_report
 
     history = _load_history(sessions, review)
+    from app.services.model_disclosure import require_review_consent
+
+    # 在任何文献数据库或模型外发前检查；未同意不能产生通过报告。
+    with sessions() as db:
+        require_review_consent(db, review.project_id)
     common = {
         "project_id": review.project_id,
         "delivery_id": review.delivery_id,

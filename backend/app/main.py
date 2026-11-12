@@ -6,6 +6,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.routing import Route
 
+from app.api.admin_usage import router as admin_usage_router
 from app.api.agent_boundary import enforce_identity_channel
 from app.api.agent_http import router as agent_http_router
 from app.api.agents import router as agents_router
@@ -16,6 +17,7 @@ from app.api.drafts import router as drafts_router
 from app.api.events import router as events_router
 from app.api.final_reviews import router as final_reviews_router
 from app.api.health import router as health_router
+from app.api.model_disclosure import router as model_disclosure_router
 from app.api.modules import router as modules_router
 from app.api.notifications import router as notifications_router
 from app.api.plans import router as plans_router
@@ -54,6 +56,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     app.include_router(health_router, prefix="/api")
+    app.include_router(admin_usage_router, prefix="/api")
+    app.include_router(model_disclosure_router, prefix="/api")
     app.include_router(auth_router, prefix="/api")
     app.include_router(agents_router, prefix="/api")
     app.include_router(agent_http_router, prefix="/api")

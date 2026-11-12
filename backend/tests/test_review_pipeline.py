@@ -1,6 +1,7 @@
 """固定流水线的调度、事务和领取隔离；无真实模型或外部数据库API。"""
 
 import json
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -74,10 +75,19 @@ def invoke(sessions, review, *, storage=None, client=None, database_client=None)
     )
 
 
+@pytest.fixture
+def consented_unit_sessions(monkeypatch):
+    from app.services import model_disclosure
+
+    # 纯编排测试隔离已同意的前置条件；真实数据库门禁另有覆盖。
+    monkeypatch.setattr(model_disclosure, "require_review_consent", lambda db, project_id: None)
+    return lambda: nullcontext(None)
+
+
 def test_four_stages_share_exact_context_history_and_preserve_complete_large_raw_reports(
-    monkeypatch,
+    monkeypatch, consented_unit_sessions
 ):
-    old, review, sessions = history(), review_input(), object()
+    old, review, sessions = history(), review_input(), consented_unit_sessions
     monkeypatch.setattr(review_pipeline, "_load_history", lambda supplied, task: old)
     calls, outputs = install_stages(monkeypatch)
     outputs["reasoning"]["large_diagnostic"] = "片段" * 100_000
@@ -108,12 +118,12 @@ def test_four_stages_share_exact_context_history_and_preserve_complete_large_raw
 
 @pytest.mark.parametrize("failed", STAGES)
 def test_each_stage_exception_is_safe_partial_and_does_not_cancel_independent_stages(
-    monkeypatch, failed
+    monkeypatch, consented_unit_sessions, failed
 ):
     monkeypatch.setattr(review_pipeline, "_load_history", lambda supplied, task: [])
     calls, outputs = install_stages(monkeypatch, failed=failed, failure=RuntimeError(PRIVATE))
     captures, pointer = install_report_capture(monkeypatch)
-    assert invoke(object(), review_input()) is pointer
+    assert invoke(consented_unit_sessions, review_input()) is pointer
     assert [call[0] for call in calls] == list(STAGES)
     report = captures[0][2]
     assert report[failed] == {
@@ -126,25 +136,29 @@ def test_each_stage_exception_is_safe_partial_and_does_not_cancel_independent_st
 
 
 @pytest.mark.parametrize("failed", STAGES)
-def test_quota_is_unchanged_and_stops_further_calls_without_staging(monkeypatch, failed):
+def test_quota_is_unchanged_and_stops_further_calls_without_staging(
+    monkeypatch, consented_unit_sessions, failed
+):
     monkeypatch.setattr(review_pipeline, "_load_history", lambda supplied, task: [])
     reset = datetime.now(UTC) + timedelta(days=1)
     failure = QuotaExceededError("platform_tokens", reset)
     calls, _ = install_stages(monkeypatch, failed=failed, failure=failure)
     captures, _ = install_report_capture(monkeypatch)
     with pytest.raises(QuotaExceededError) as error:
-        invoke(object(), review_input())
+        invoke(consented_unit_sessions, review_input())
     assert error.value is failure and error.value.retry_at == reset
     assert [call[0] for call in calls] == list(STAGES[: STAGES.index(failed) + 1])
     assert captures == []
 
 
 @pytest.mark.parametrize("malformed", [[], "not a report", 42])
-def test_non_object_stage_output_is_a_partial_failure(monkeypatch, malformed):
+def test_non_object_stage_output_is_a_partial_failure(
+    monkeypatch, consented_unit_sessions, malformed
+):
     monkeypatch.setattr(review_pipeline, "_load_history", lambda supplied, task: [])
     calls, _ = install_stages(monkeypatch, malformed=malformed)
     captures, _ = install_report_capture(monkeypatch)
-    invoke(object(), review_input())
+    invoke(consented_unit_sessions, review_input())
     assert len(calls) == 4
     assert captures[0][2]["format"]["status"] == "incomplete"
 

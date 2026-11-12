@@ -13,7 +13,7 @@ from app.models import User
 from app.models.delivery import DeliveryVersion, SharedMaterial
 from app.schemas.deliveries import DeliverySubmit, DeliveryVersionInfo, SharedMaterialInfo
 from app.schemas.version_binding import ResubmissionRequest, VersionBindingInfo
-from app.services import deliveries, projects, version_binding
+from app.services import deliveries, model_disclosure, projects, version_binding
 from app.storage import LocalStorage, UploadTooLargeError
 
 router = APIRouter(tags=["deliveries"])
@@ -52,6 +52,8 @@ def material_info(item: SharedMaterial) -> SharedMaterialInfo:
 
 
 def delivery_error(error: Exception) -> HTTPException:
+    if isinstance(error, model_disclosure.DisclosureVersionError):
+        return HTTPException(409, str(error), headers={"Cache-Control": "no-store"})
     if isinstance(error, projects.ProjectError):
         return project_error(error)
     if isinstance(error, deliveries.DeliveryAssigneeRequiredError):
@@ -80,11 +82,15 @@ def submit_delivery(
     ai_participation: Annotated[Literal["none", "assisted", "primary"], Form()],
     ai_note: Annotated[str, Form(max_length=2000)] = "",
     handoff_note: Annotated[str, Form(max_length=10000)] = "",
+    disclosure_version: Annotated[str | None, Form(max_length=80)] = None,
 ) -> DeliveryVersionInfo:
     settings = request.app.state.settings
     try:
         submission = DeliverySubmit(
-            ai_participation=ai_participation, ai_note=ai_note, handoff_note=handoff_note
+            ai_participation=ai_participation,
+            ai_note=ai_note,
+            handoff_note=handoff_note,
+            disclosure_version=disclosure_version,
         )
     except ValidationError:
         raise HTTPException(422, "请检查 AI 参与声明和交接说明") from None
@@ -107,6 +113,7 @@ def submit_delivery(
         deliveries.DeliveryAssigneeRequiredError,
         deliveries.DeliveryValidationError,
         UploadTooLargeError,
+        model_disclosure.DisclosureVersionError,
     ) as error:
         raise delivery_error(error) from None
     response.headers["Cache-Control"] = "no-store"

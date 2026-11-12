@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.api.auth import require_csrf, require_user
 from app.db import get_session
 from app.models import Project, User
-from app.services import projects
+from app.services import model_disclosure, projects
 
 router = APIRouter(tags=["projects"])
 Database = Annotated[Session, Depends(get_session)]
@@ -19,6 +19,8 @@ CurrentUser = Annotated[User, Depends(require_user)]
 class ProjectCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     name: str = Field(min_length=1, max_length=120)
+    data_transfer_consent: bool = Field(default=False, strict=True)
+    disclosure_version: str | None = Field(default=None, min_length=1, max_length=80)
 
     @field_validator("name")
     @classmethod
@@ -87,7 +89,16 @@ def project_error(error: projects.ProjectError) -> HTTPException:
     "/projects", status_code=201, response_model=ProjectInfo, dependencies=[Depends(require_csrf)]
 )
 def create_project(body: ProjectCreate, user: CurrentUser, db: Database) -> ProjectInfo:
-    project = projects.create_project(db, body.name, user.id)
+    try:
+        project = projects.create_project(
+            db,
+            body.name,
+            user.id,
+            data_transfer_consent=body.data_transfer_consent,
+            disclosure_version=body.disclosure_version,
+        )
+    except model_disclosure.DisclosureVersionError as error:
+        raise HTTPException(409, str(error), headers={"Cache-Control": "no-store"}) from None
     return project_info(project, "leader")
 
 

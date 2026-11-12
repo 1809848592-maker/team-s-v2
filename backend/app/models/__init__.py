@@ -7,6 +7,7 @@ from app.models.delivery import DeliveryVersion, SharedMaterial
 from app.models.event import Event
 from app.models.final_review import FinalReviewDecision
 from app.models.llm_usage import DailyBudget, LLMProjectPolicy, ModelCall, ReviewAdmission
+from app.models.model_disclosure import ProjectModelConsent, SubmissionDisclosure
 from app.models.module import Module
 from app.models.notification import Notification
 from app.models.plan import PlanVersion
@@ -45,6 +46,8 @@ __all__ = [
     "Notification",
     "PlanVersion",
     "Project",
+    "ProjectModelConsent",
+    "SubmissionDisclosure",
     "ProjectMember",
     "ProgressReport",
     "RequestMessage",

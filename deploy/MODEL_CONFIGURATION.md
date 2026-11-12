@@ -1,12 +1,12 @@
-# M3-03 模型配置与费用估算
+# 模型配置与费用估算
 
-核实日期：2026-11-11。本文件说明模型接入层的配置与边界，不替代完整部署指南。
+模型接口及价格快照核实日期：2026-11-11；数据条款复核日期：2026-11-12。本文件说明模型接入层的配置与边界，不替代完整部署指南。项目告知、同意及管理员操作见 [数据外发告知与用量管理](DATA_DISCLOSURE_AND_USAGE.md)。
 
 ## 当前执行范围
 
-本项使用固定响应替身验证接入、用量记录和额度控制，不向模型厂商发送交付内容，也不执行真实付费调用。当前 worker 的审核 runner 尚未调用模型，后续审核员框架接入后才会使用本层；不能将后台任务完成视为审核通过。
+M3-07 至 M3-09 的规范、文献、逻辑及衔接审核员已接入本层，worker 按固定流水线执行并持久化审核结果、用量及额度。本阶段自动化及隔离容器验证均使用固定响应替身或禁用真实调用，真实 DeepSeek 调用数为0；真实模型验证只留待 M3 最终验收。后台任务完成本身不代表审核通过，交付状态由审核汇总规则决定。
 
-`LLM_ENABLE_LIVE_CALLS=false` 是默认值。保持该值即可关闭本层真实请求。即使已填写 Key，也不会因此启用真实调用。M3-13 需要完成负责人知情同意及相应告知后，才能启用 AI 审核；单独修改此开关不代表已满足启用条件。
+`LLM_ENABLE_LIVE_CALLS=false` 是默认值。保持该值即可关闭本层真实请求。即使已填写 Key，也不会因此启用真实调用。M3-13 已实现版本化告知和负责人知情同意：整个审核流水线运行前和模型预算预留前均检查项目是否同意当前告知，未同意则不外发。启用真实审核须同时满足有效配置、真实调用开关及当前版本项目同意。
 
 ## 配置与密钥
 
@@ -21,7 +21,7 @@
 | `linkage` | `deepseek-v4-pro` | `true` | 8192 |
 | `spec_draft` | `deepseek-flash` | `false` | 4096 |
 
-这些是平台默认分配，不表示本项已实现各审核员。表中思考模式为 TOML 的 `thinking` 布尔值，发送时映射为 API 的 `enabled` / `disabled`。`provider` 为 `deepseek`，`base_url` 为 `https://api.deepseek.com`，`key_env` 为 `DEEPSEEK_API_KEY`，`timeout_seconds` 默认60秒。输出和超时限额可按审核员分别调整；不能超过 worker 的执行时间预算。
+前五项用于已接入的审核员；`spec_draft` 是 M3-15 平台辅助起草规范的预留配置，目前没有对应起草功能。表中思考模式为 TOML 的 `thinking` 布尔值，发送时映射为 API 的 `enabled` / `disabled`。`provider` 为 `deepseek`，`base_url` 为 `https://api.deepseek.com`，`key_env` 为 `DEEPSEEK_API_KEY`，`timeout_seconds` 默认60秒。输出和超时限额可按审核员分别调整；不能超过 worker 的执行时间预算。
 
 真实 Key 仅写入未纳入版本控制的 `platform/.env`，由 Compose 注入 web/worker 环境；Settings 通过 `DEEPSEEK_API_KEY` 读取并使用 `SecretStr` 保存。TOML 只写环境变量名，不写 Key。不要把 Key 放入前端、模型输出、日志、截图或提交内容。本文件和示例配置均不需要真实 Key。
 
@@ -62,6 +62,6 @@
 
 官方上下文磁盘缓存默认开启，采用尽力命中方式，缓存前缀须匹配已持久化的完整单元；不能预先保证缓存折扣。缓存不再使用后通常数小时至数天清理，该描述不等于所有请求日志的保留承诺。本层将项目ID的 SHA-256 哈希作为 `user_id`，利用官方提供的 KVCache 隔离能力；不会发送用户名或邮箱，也不能据此宣称“不留存”。[缓存](https://api-docs.deepseek.com/guides/kv_cache/)、[隔离](https://api-docs.deepseek.com/quick_start/rate_limit/)
 
-已核对 [DeepSeek 开放平台服务协议](https://cdn.deepseek.com/policies/zh-CN/deepseek-open-platform-terms-of-service.html)（2026-04-22更新，2026-04-29生效）。协议第3.5条要求开发者告知终端用户相关个人信息处理及委托处理规则，第5.5条说明其通用隐私政策不覆盖下游应用终端用户的个人信息处理规则。[通用隐私政策](https://cdn.deepseek.com/policies/en-US/deepseek-privacy-policy.html)也在引言作出同样的范围说明。
+2026-11-12 复核了 [DeepSeek 开放平台服务协议](https://cdn.deepseek.com/policies/zh-CN/deepseek-open-platform-terms-of-service.html)（2026-04-22更新，2026-04-29生效）、[通用隐私政策](https://cdn.deepseek.com/policies/zh-CN/deepseek-privacy-policy.html)（2026-02-10更新并生效）及[用户协议](https://cdn.deepseek.com/policies/zh-CN/deepseek-terms-of-use.html)（2025-09-05更新并生效）。开放平台协议第3.5条要求开发者承担下游终端用户数据告知及适用的同意责任，第5.5条区分开发者自身与下游终端用户的数据处理范围。
 
-截至核实日，在所查公开 API 文档和协议中未找到 API 输入“明确不用于训练”的承诺，也未核实到 API 专属的日志保留期限或零留存选项。不能从通用隐私政策中的训练描述直接推定 API 数据必然用于训练，也不能宣称其不用于训练。按设计方案14.7，本项不外发；M3-13 须向负责人说明 DeepSeek 厂商名称、条款链接及上述不确定性，并取得知情同意后才能启用 AI 审核。本文件只记录查证结果，不提前实现或替代该同意流程。
+截至该复核日，未核实 API 请求数据明确不用于训练的承诺、API 专属日志保留期限或训练退出配置。通用条款中的训练描述不能直接推定 API 数据必然用于训练，消费产品内的退出开关也不是本平台已核实的 API 保障。按设计方案14.7，创建项目时的同意默认不勾选；负责人也可稍后在任务页阅读并同意，提交人首次正式提交时另行阅读告知。旧项目不会自动补记同意。当前告知版本、完整查证范围及操作说明见 [数据外发告知与用量管理](DATA_DISCLOSURE_AND_USAGE.md)。

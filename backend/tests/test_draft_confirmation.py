@@ -15,6 +15,7 @@ from test_specs import publish_spec, specification
 
 from app.models import AgentDraft, DeliveryVersion, Event
 from app.models.immutable import SnapshotImmutableError
+from app.services.model_disclosure import DISCLOSURE_VERSION
 
 
 def draft_team(environment, *, with_spec=True):
@@ -37,7 +38,11 @@ def draft_team(environment, *, with_spec=True):
 def confirm(team, *, client=None, body=None, headers=None):
     return (client or team.member).post(
         team.detail + "/confirm",
-        json={"ai_participation": "primary", "ai_note": "本人已核查 AI 草稿内容。"}
+        json={
+            "ai_participation": "primary",
+            "ai_note": "本人已核查 AI 草稿内容。",
+            "disclosure_version": DISCLOSURE_VERSION,
+        }
         if body is None
         else body,
         headers=CSRF_HEADERS if headers is None else headers,

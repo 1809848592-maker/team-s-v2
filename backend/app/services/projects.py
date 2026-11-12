@@ -45,7 +45,14 @@ def require_member(
     return membership
 
 
-def create_project(db: Session, name: str, user_id: UUID) -> Project:
+def create_project(
+    db: Session,
+    name: str,
+    user_id: UUID,
+    *,
+    data_transfer_consent: bool = False,
+    disclosure_version: str | None = None,
+) -> Project:
     project = Project(name=name, created_by=user_id)
     db.add(project)
     db.flush()
@@ -59,6 +66,11 @@ def create_project(db: Session, name: str, user_id: UUID) -> Project:
         object_id=project.id,
         details={"name": project.name, "role": "leader"},
     )
+    if data_transfer_consent:
+        from app.services.model_disclosure import accept_project_consent
+
+        db.flush()
+        accept_project_consent(db, project.id, user_id, disclosure_version, commit=False)
     db.commit()
     return project
 

@@ -11,7 +11,7 @@ from app.db import get_session
 from app.models.auth import User
 from app.schemas.agent_drafts import AgentDraftView, DraftConfirm
 from app.schemas.deliveries import DeliveryVersionInfo
-from app.services import deliveries, draft_confirmation, projects
+from app.services import deliveries, draft_confirmation, model_disclosure, projects
 from app.storage import LocalStorage, UploadTooLargeError
 
 router = APIRouter(prefix="/projects/{project_id}/drafts", tags=["drafts"])
@@ -33,6 +33,7 @@ def draft_error(error: Exception) -> HTTPException:
 
 
 ERRORS = (
+    model_disclosure.DisclosureVersionError,
     projects.ProjectError,
     draft_confirmation.DraftNotFoundError,
     draft_confirmation.DraftAlreadyConfirmedError,

@@ -14,6 +14,7 @@ from test_specs import publish_spec, specification
 
 from app.models import DeliveryVersion, SharedMaterial
 from app.models.immutable import SnapshotImmutableError
+from app.services.model_disclosure import DISCLOSURE_VERSION
 
 
 def ready_team(environment, *, multiple_owners=False):
@@ -50,6 +51,7 @@ def upload_delivery(
             "ai_participation": ai_participation,
             "ai_note": ai_note,
             "handoff_note": handoff_note,
+            "disclosure_version": DISCLOSURE_VERSION,
         },
         headers=CSRF_HEADERS if headers is None else headers,
     )

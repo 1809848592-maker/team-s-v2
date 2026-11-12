@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { ApiError, api, dateText, errorText, projectPath, sizeText, stageLabels } from '../api/client'
-import type { Delivery, DraftView, Material, Member, Module, ModuleProgress, Progress } from '../api/types'
+import type { Delivery, DraftView, Material, Member, Module, ModuleProgress, Progress, ProjectModelDisclosure } from '../api/types'
 import DeliveryReviewStatus from './DeliveryReviewStatus.vue'
 import DeliveryVersionBinding from './DeliveryVersionBinding.vue'
+import ModelDisclosureNotice from './ModelDisclosureNotice.vue'
 import { useReviewPolling } from '../composables/useReviewPolling'
 
 const props = defineProps<{ projectId: string; members: Member[]; accountId: string; initialModuleId?: string }>()
@@ -16,6 +17,7 @@ const selectedId = ref(''), loading = ref(false), historyLoading = ref(false)
 const loadError = ref(''), historyError = ref(''), actionError = ref(''), notice = ref('')
 const reportBusy = ref(false), deliveryBusy = ref(false), materialBusy = ref(false)
 const requestingResubmissionId = ref('')
+const disclosure = ref<ProjectModelDisclosure | null>(null), consentChecked = ref(false), consentBusy = ref(false)
 const stage = ref('planning'), summary = ref(''), ai = ref(''), aiNote = ref(''), handoff = ref('')
 const deliveryFile = ref<File | null>(null), materialFile = ref<File | null>(null)
 const deliveryInput = ref<HTMLInputElement | null>(null), materialInput = ref<HTMLInputElement | null>(null)
@@ -29,7 +31,7 @@ const ownDrafts = computed(() => drafts.value.filter(item => item.owner_id === p
 const pendingDrafts = computed(() => ownDrafts.value.filter(item => item.status === 'pending_confirmation'))
 const confirmedDrafts = computed(() => ownDrafts.value.filter(item => item.status === 'confirmed'))
 const canReport = computed(() => currentModule.value?.assignee_ids.includes(props.accountId) ?? false)
-const busy = computed(() => reportBusy.value || deliveryBusy.value || materialBusy.value || !!confirmingDraftId.value || !!requestingResubmissionId.value)
+const busy = computed(() => reportBusy.value || deliveryBusy.value || materialBusy.value || !!confirmingDraftId.value || !!requestingResubmissionId.value || consentBusy.value)
 const { error: reviewError, refreshing: reviewRefreshing, retry: retryReview } = useReviewPolling({
   contextKey: () => `${props.projectId}:${props.accountId}:${selectedId.value}`,
   projectId: () => props.projectId,
@@ -53,15 +55,16 @@ async function load() {
   const path = projectPath(owner.projectId)
   loading.value = true; loadError.value = ''
   try {
-    const [nextModules, nextProgress, nextDeliveries, nextMaterials, nextDrafts] = await Promise.all([
+    const [nextModules, nextProgress, nextDeliveries, nextMaterials, nextDrafts, nextDisclosure] = await Promise.all([
       api<Module[]>(`${path}/modules`), api<ModuleProgress[]>(`${path}/progress`),
       api<Delivery[]>(`${path}/deliveries`), api<Material[]>(`${path}/materials`),
-      api<DraftView[]>(`${path}/drafts`),
+      api<DraftView[]>(`${path}/drafts`), api<ProjectModelDisclosure>(`${path}/model-disclosure`),
     ])
     if (!current(owner) || sequence !== loadSequence) return
     const previousSelectedId = selectedId.value
     modules.value = nextModules; progress.value = nextProgress
     deliveries.value = nextDeliveries; materials.value = nextMaterials
+    disclosure.value = nextDisclosure; consentChecked.value = false
     drafts.value = nextDrafts.filter(item => item.owner_id === owner.accountId)
     if (!drafts.value.some(item => item.id === selectedDraftId.value && item.status === 'pending_confirmation')) selectedDraftId.value = ''
     if (!initialSelectionApplied) {
@@ -99,12 +102,13 @@ async function report() {
   finally { if (current(owner)) reportBusy.value = false }
 }
 async function submitDelivery() {
-  if (!canReport.value || loading.value || busy.value || !deliveryFile.value || !ai.value) return
+  if (!canReport.value || loading.value || busy.value || !deliveryFile.value || !ai.value || !disclosure.value) return
   const owner = context()
   deliveryBusy.value = true; actionError.value = ''; notice.value = ''
   const body = new FormData()
   body.append('file', deliveryFile.value); body.append('ai_participation', ai.value)
   body.append('ai_note', aiNote.value.trim()); body.append('handoff_note', handoff.value.trim())
+  body.append('disclosure_version', disclosure.value.notice.version)
   try {
     await api<Delivery>(`${projectPath(props.projectId)}/modules/${encodeURIComponent(selectedId.value)}/deliveries`, body)
     if (!current(owner)) return
@@ -112,13 +116,16 @@ async function submitDelivery() {
     if (deliveryInput.value) deliveryInput.value.value = ''
     notice.value = '正式交付已提交，新版本已保留。'
     await load(); if (current(owner)) emit('changed')
-  } catch (error) { if (current(owner)) actionError.value = errorText(error) }
-  finally { if (current(owner)) deliveryBusy.value = false }
+  } catch (error) {
+    if (!current(owner)) return
+    actionError.value = errorText(error)
+    if (error instanceof ApiError && error.status === 409) await load()
+  } finally { if (current(owner)) deliveryBusy.value = false }
 }
 async function confirmDraft(draft: DraftView) {
-  if (busy.value || loading.value || selectedDraftId.value !== draft.id || !draftAi.value || draft.status !== 'pending_confirmation' || !mayConfirm(draft)) return
+  if (!disclosure.value || busy.value || loading.value || selectedDraftId.value !== draft.id || !draftAi.value || draft.status !== 'pending_confirmation' || !mayConfirm(draft)) return
   const owner = context(), draftId = draft.id
-  const body = { ai_participation: draftAi.value, ai_note: draftAiNote.value.trim() }
+  const body = { ai_participation: draftAi.value, ai_note: draftAiNote.value.trim(), disclosure_version: disclosure.value.notice.version }
   confirmingDraftId.value = draftId; actionError.value = ''; notice.value = ''
   try {
     const delivery = await api<Delivery>(`${projectPath(owner.projectId)}/drafts/${encodeURIComponent(draftId)}/confirm`, body)
@@ -157,6 +164,20 @@ async function requestResubmission(delivery: Delivery) {
     if (error instanceof ApiError && error.status === 409) { await load(); if (current(owner)) emit('changed') }
   } finally { if (current(owner)) requestingResubmissionId.value = '' }
 }
+async function acceptModelConsent() {
+  if (busy.value || loading.value || !consentChecked.value || !disclosure.value?.can_consent) return
+  const owner = context(), version = disclosure.value.notice.version
+  consentBusy.value = true; actionError.value = ''; notice.value = ''
+  try {
+    const result = await api<ProjectModelDisclosure>(`${projectPath(owner.projectId)}/model-consent`, {disclosure_version:version})
+    if (!current(owner)) return
+    disclosure.value = result; consentChecked.value = false; notice.value = '负责人知情同意已记录，本项目可启用 AI 审核。'; emit('changed')
+  } catch (error) {
+    if (!current(owner)) return
+    actionError.value = errorText(error)
+    if (error instanceof ApiError && error.status === 409) await load()
+  } finally { if (current(owner)) consentBusy.value = false }
+}
 async function uploadMaterial() {
   if (loading.value || busy.value || !materialFile.value) return
   const owner = context()
@@ -186,7 +207,7 @@ watch(() => [props.projectId, props.accountId], () => {
   selectedId.value = ''; reports.value = []; materialFile.value = null
   selectedDraftId.value = ''; draftAi.value = ''; draftAiNote.value = ''; confirmingDraftId.value = ''
   reportBusy.value = false; deliveryBusy.value = false; materialBusy.value = false
-  requestingResubmissionId.value = ''
+  requestingResubmissionId.value = ''; disclosure.value = null; consentChecked.value = false; consentBusy.value = false
   actionError.value = ''; notice.value = ''; historyError.value = ''
   if (materialInput.value) materialInput.value.value = ''
   void load()
@@ -202,6 +223,11 @@ onBeforeUnmount(() => { mounted = false; ++contextSequence; ++loadSequence; ++hi
     <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
     <p v-if="notice" class="notice" role="status">{{ notice }}</p>
     <p v-if="reviewError" class="error" role="alert">审核进度读取失败：{{ reviewError }} <button class="btn quiet" :disabled="reviewRefreshing || loading || busy" @click="retryReview">重试读取审核进度</button></p>
+    <section v-if="disclosure" class="submission-disclosure" aria-label="交付数据外发告知">
+      <ModelDisclosureNotice :notice="disclosure.notice"/>
+      <p v-if="disclosure.project_consent" class="muted">项目负责人已于 {{ dateText(disclosure.project_consent.accepted_at) }} 确认知情同意。{{ disclosure.submission_acknowledged ? '你已阅读本版告知。' : '提交正式交付或确认智能体稿件时，将记录你已阅读本版告知。' }}</p>
+      <template v-else><p class="muted">本项目尚未启用 AI 审核。正式交付可保存；向 DeepSeek 外发前须由项目负责人确认知情同意。</p><form v-if="disclosure.can_consent" class="consent-form" @submit.prevent="acceptModelConsent"><label class="consent-checkbox"><input v-model="consentChecked" type="checkbox" :disabled="busy || loading">我已阅读并同意向 DeepSeek 外发审核数据，启用本项目 AI 审核。</label><button class="btn" :disabled="busy || loading || !consentChecked">{{ consentBusy ? '正在记录…' : '确认知情同意' }}</button></form><p v-else class="muted">请联系项目负责人确认；此操作由人负责。</p></template>
+    </section>
     <div v-if="modules.length" class="field module-picker"><label for="task-module">当前任务</label><select id="task-module" v-model="selectedId" :disabled="busy || loading"><option v-for="module in modules" :key="module.id" :value="module.id">{{ module.name }}</option></select></div>
     <p v-else-if="!loading && !loadError" class="empty">尚未发布分工模块。负责人发布方案后，任务会显示在这里。</p>
     <section class="subsection private-drafts" aria-labelledby="draft-title">
@@ -219,7 +245,7 @@ onBeforeUnmount(() => { mounted = false; ++contextSequence; ++loadSequence; ++hi
             <div class="field"><label :for="`draft-ai-${draft.id}`">AI 参与声明</label><select :id="`draft-ai-${draft.id}`" v-model="draftAi" required :disabled="busy || loading"><option disabled value="">请选择</option><option v-for="(label, value) in aiLabels" :key="value" :value="value">{{ label }}</option></select></div>
             <div class="field"><label :for="`draft-ai-note-${draft.id}`">AI 参与说明（选填）</label><textarea :id="`draft-ai-note-${draft.id}`" v-model="draftAiNote" maxlength="2000" rows="2" :disabled="busy || loading" /></div>
             <p class="muted">确认后会绑定当前最新方案和规范，作为正式交付提交。</p>
-            <div class="toolbar"><button class="btn primary" :data-confirm-draft="draft.id" :disabled="busy || loading || !draftAi">{{ confirmingDraftId === draft.id ? '正在确认…' : '确认提交' }}</button><button type="button" class="btn quiet" :disabled="busy || loading" @click="selectedDraftId = ''">取消</button></div>
+            <div class="toolbar"><button class="btn primary" :data-confirm-draft="draft.id" :disabled="busy || loading || !draftAi || !disclosure">{{ confirmingDraftId === draft.id ? '正在确认…' : '确认提交' }}</button><button type="button" class="btn quiet" :disabled="busy || loading" @click="selectedDraftId = ''">取消</button></div>
           </form>
         </template>
       </article></div>
@@ -245,7 +271,7 @@ onBeforeUnmount(() => { mounted = false; ++contextSequence; ++loadSequence; ++hi
           <div class="field"><label for="delivery-ai-note">AI 参与说明（选填）</label><textarea id="delivery-ai-note" v-model="aiNote" maxlength="2000" rows="2" :disabled="busy || loading" /></div>
           <div class="field"><label for="delivery-handoff">交接说明（选填）</label><textarea id="delivery-handoff" v-model="handoff" maxlength="10000" rows="3" :disabled="busy || loading" /></div>
           <p class="muted">本次提交会绑定当前最新的方案和规范，并保留此前版本。</p>
-          <button class="btn primary" :disabled="busy || loading || !deliveryFile || !ai">{{ deliveryBusy ? '正在上传…' : '提交正式交付' }}</button>
+          <button class="btn primary" :disabled="busy || loading || !deliveryFile || !ai || !disclosure">{{ deliveryBusy ? '正在上传…' : '提交正式交付' }}</button>
         </form>
       </div>
       <p v-else class="muted">只有该模块的负责人可以回报进度、提交正式交付。</p>
@@ -258,5 +284,5 @@ onBeforeUnmount(() => { mounted = false; ++contextSequence; ++loadSequence; ++hi
 </template>
 
 <style scoped>
-.draft-record{overflow-wrap:anywhere}.draft-confirm-form{margin-top:20px;padding-top:20px;border-top:1px solid var(--line)}.draft-confirm-form>.toolbar{justify-content:flex-start}.confirmed-drafts{margin-top:22px}.confirmed-drafts>summary{margin-bottom:16px}.confirmed-drafts .draft-record+.draft-record{margin-top:14px}.module-picker{max-width:560px;margin:24px 0}.task-context{padding:22px;background:var(--canvas);border-left:3px solid var(--teal);margin:24px 0}.task-context h3{margin:0}.context-grid{display:grid;grid-template-columns:92px 1fr;gap:14px;margin:22px 0}.context-grid dt{color:var(--muted);font-size:13px}.context-grid dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.dependency-list{margin:0;padding-left:20px}.dependency-list li+li{margin-top:8px}.latest-report{border-top:1px solid var(--line);padding-top:18px}.latest-report h4{margin:0 0 8px;font-size:13px}.latest-report p{margin:8px 0}.task-forms{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}.task-forms h3{margin:0}.task-forms .btn{justify-self:start}.subsection{margin-top:30px;border-top:1px solid var(--line);padding-top:24px}.subsection h3{margin-top:0}.subsection summary{cursor:pointer;font-weight:600}.record details{font-size:12px;color:var(--muted)}.binding-grid{display:grid;grid-template-columns:76px 1fr;gap:8px}.binding-grid dd{margin:0;overflow-wrap:anywhere}.report-list{list-style:none;padding:0}.report-list li{padding:16px 0;border-bottom:1px solid var(--line)}.report-list p{margin:8px 0}.archived-delivery{margin-top:16px}.binding-text{overflow-wrap:anywhere}.material-form{display:flex;align-items:end;gap:16px;margin:20px 0}.material-form .field{flex:1}.material-list{padding:0;list-style:none}.material-list li{display:flex;justify-content:space-between;gap:20px;padding:16px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}.material-list span{font-size:12px;text-align:right}@media(max-width:850px){.task-forms{grid-template-columns:1fr}.context-grid{grid-template-columns:1fr;gap:6px}.context-grid dd{margin-bottom:10px}.material-form{align-items:stretch;flex-direction:column}.material-list li{flex-direction:column;gap:6px}.material-list span{text-align:left}}
+.submission-disclosure{margin:24px 0}.consent-form{display:flex;align-items:center;gap:20px;flex-wrap:wrap}.consent-checkbox{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.7}.consent-checkbox input{margin-top:5px;flex-shrink:0}.draft-record{overflow-wrap:anywhere}.draft-confirm-form{margin-top:20px;padding-top:20px;border-top:1px solid var(--line)}.draft-confirm-form>.toolbar{justify-content:flex-start}.confirmed-drafts{margin-top:22px}.confirmed-drafts>summary{margin-bottom:16px}.confirmed-drafts .draft-record+.draft-record{margin-top:14px}.module-picker{max-width:560px;margin:24px 0}.task-context{padding:22px;background:var(--canvas);border-left:3px solid var(--teal);margin:24px 0}.task-context h3{margin:0}.context-grid{display:grid;grid-template-columns:92px 1fr;gap:14px;margin:22px 0}.context-grid dt{color:var(--muted);font-size:13px}.context-grid dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.dependency-list{margin:0;padding-left:20px}.dependency-list li+li{margin-top:8px}.latest-report{border-top:1px solid var(--line);padding-top:18px}.latest-report h4{margin:0 0 8px;font-size:13px}.latest-report p{margin:8px 0}.task-forms{display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start}.task-forms h3{margin:0}.task-forms .btn{justify-self:start}.subsection{margin-top:30px;border-top:1px solid var(--line);padding-top:24px}.subsection h3{margin-top:0}.subsection summary{cursor:pointer;font-weight:600}.record details{font-size:12px;color:var(--muted)}.binding-grid{display:grid;grid-template-columns:76px 1fr;gap:8px}.binding-grid dd{margin:0;overflow-wrap:anywhere}.report-list{list-style:none;padding:0}.report-list li{padding:16px 0;border-bottom:1px solid var(--line)}.report-list p{margin:8px 0}.archived-delivery{margin-top:16px}.binding-text{overflow-wrap:anywhere}.material-form{display:flex;align-items:end;gap:16px;margin:20px 0}.material-form .field{flex:1}.material-list{padding:0;list-style:none}.material-list li{display:flex;justify-content:space-between;gap:20px;padding:16px 0;border-top:1px solid var(--line);overflow-wrap:anywhere}.material-list span{font-size:12px;text-align:right}@media(max-width:850px){.task-forms{grid-template-columns:1fr}.context-grid{grid-template-columns:1fr;gap:6px}.context-grid dd{margin-bottom:10px}.material-form{align-items:stretch;flex-direction:column}.material-list li{flex-direction:column;gap:6px}.material-list span{text-align:left}}
 </style>

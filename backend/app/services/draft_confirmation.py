@@ -166,6 +166,7 @@ def confirm_draft(
                         ai_participation=body.ai_participation,
                         ai_note=body.ai_note,
                         handoff_note=draft.handoff_note,
+                        disclosure_version=body.disclosure_version,
                     ),
                     storage=storage,
                     max_bytes=max_bytes,
