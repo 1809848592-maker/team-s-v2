@@ -1,0 +1,11 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy web:8000 {
+		# MCP Streamable HTTP/SSE must reach clients immediately.
+		flush_interval -1
+	}
+}

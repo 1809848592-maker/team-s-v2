@@ -21,7 +21,7 @@ docker compose logs web worker
 docker compose down
 ```
 
-默认是本地开发配置：web 仅监听本机，PostgreSQL 不暴露宿主机端口，数据库为 `teams_dev`，数据保存在本项目的命名开发卷。示例密码仅用于本地开发。生产部署、HTTPS、备份将在 M4-04 完成。
+默认是本地开发配置：web 仅监听本机，PostgreSQL 不暴露宿主机端口，数据库为 `teams_dev`，数据保存在本项目的命名开发卷。示例密码仅用于本地开发。生产请使用独立的 [部署指南](deploy/DEPLOY.md)、`deploy/compose.production.yaml` 和 Caddy；指南包含 HTTPS、备份恢复、模型配置及数据条款查证。
 
 ## 账号与会话
 

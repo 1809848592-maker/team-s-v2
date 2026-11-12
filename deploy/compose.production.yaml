@@ -1,0 +1,118 @@
+# Independent from docker-compose.yml: no development ports, password or source bind mounts.
+name: teams-platform-production
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-backend: &backend
+  image: ${PLATFORM_IMAGE:-teams-platform:production}
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+  environment:
+    # Generate 64 hexadecimal characters as documented in DEPLOY.md (URL-safe).
+    DATABASE_URL: postgresql+psycopg://teams:${POSTGRES_PASSWORD:?Set a URL-safe production password}@postgres:5432/teams
+    STATIC_DIR: /app/static
+    STORAGE_DIR: /app/storage
+    SESSION_COOKIE_SECURE: "true"
+    SESSION_TTL_SECONDS: ${SESSION_TTL_SECONDS:-1209600}
+    PLATFORM_ADMIN_USER_IDS: ${PLATFORM_ADMIN_USER_IDS:-}
+    UPLOAD_MAX_BYTES: ${UPLOAD_MAX_BYTES:-104857600}
+    MCP_ALLOWED_HOSTS: ${PUBLIC_DOMAIN:?Set the public DNS hostname}
+    MCP_ALLOWED_ORIGINS: https://${PUBLIC_DOMAIN:?Set the public DNS hostname}
+    WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-2}
+    REVIEW_JOB_TIMEOUT_SECONDS: ${REVIEW_JOB_TIMEOUT_SECONDS:-300}
+    REVIEW_JOB_LEASE_GRACE_SECONDS: ${REVIEW_JOB_LEASE_GRACE_SECONDS:-5}
+    REVIEW_JOB_MAX_ATTEMPTS: ${REVIEW_JOB_MAX_ATTEMPTS:-3}
+    REVIEW_JOB_RETRY_DELAY_SECONDS: ${REVIEW_JOB_RETRY_DELAY_SECONDS:-5}
+    REVIEW_RETURN_LIMIT: ${REVIEW_RETURN_LIMIT:-3}
+    BOTTLENECK_RETURN_DAYS: ${BOTTLENECK_RETURN_DAYS:-3}
+    DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+    LLM_ENABLE_LIVE_CALLS: ${LLM_ENABLE_LIVE_CALLS:-false}
+    LLM_PROJECT_DAILY_REVIEWS: ${LLM_PROJECT_DAILY_REVIEWS:-20}
+    LLM_PLATFORM_DAILY_REVIEWS: ${LLM_PLATFORM_DAILY_REVIEWS:-200}
+    LLM_PLATFORM_DAILY_TOKENS: ${LLM_PLATFORM_DAILY_TOKENS:-1000000}
+    LLM_MAX_CALLS_PER_REVIEW: ${LLM_MAX_CALLS_PER_REVIEW:-64}
+  volumes:
+    - files_data:/app/storage
+  init: true
+  restart: unless-stopped
+  logging: *logging
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: teams
+      POSTGRES_USER: teams
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a URL-safe production password}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    restart: unless-stopped
+    logging: *logging
+
+  web:
+    <<: *backend
+    # Public ingress is Caddy; keep this port on the trusted deployment network only.
+    # Trust Caddy's forwarded HTTPS scheme for the existing same-origin CSRF check.
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips='*'"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 12
+    stop_grace_period: 60s
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      web:
+        condition: service_healthy
+    # Let an in-flight review finish, otherwise its database lease recovers after restart.
+    stop_grace_period: 330s
+
+  caddy:
+    image: caddy:2.11.9-alpine
+    environment:
+      PUBLIC_DOMAIN: ${PUBLIC_DOMAIN:?Set the public DNS hostname}
+      ACME_EMAIL: ${ACME_EMAIL:?Set the ACME notification email}
+      # Preserve optional outbound ACME proxies, but never proxy the internal upstream.
+      NO_PROXY: web,localhost,127.0.0.1,::1
+      no_proxy: web,localhost,127.0.0.1,::1
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    healthcheck:
+      # Docker client proxy settings must not send this loopback probe through an HTTP proxy.
+      test: ["CMD", "wget", "-Y", "off", "-q", "-O", "/dev/null", "http://127.0.0.1:2019/config/"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    restart: unless-stopped
+    logging: *logging
+
+volumes:
+  postgres_data:
+  files_data:
+  caddy_data:
+  caddy_config:

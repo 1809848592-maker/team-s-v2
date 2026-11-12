@@ -1,6 +1,8 @@
 .git
 .env
 .env.*
+**/*.env
+deploy/backups
 .tools
 .verification
 **/.venv
