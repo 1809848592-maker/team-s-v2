@@ -2,9 +2,8 @@
 
 from typing import Literal
 
-from pydantic import Field
-
-from app.review.reviewers.schemas import Label, ReviewOutput, ReviewSchema, ShortText
+from app.review.reviewers.contract import CompactReviewOutput
+from app.review.reviewers.schemas import Label, ReviewSchema, ShortText
 
 
 class SpecCheck(ReviewSchema):
@@ -13,5 +12,5 @@ class SpecCheck(ReviewSchema):
     reason: ShortText
 
 
-class SpecReviewOutput(ReviewOutput):
-    checks: tuple[SpecCheck, ...] = Field(max_length=500)
+class SpecReviewOutput(CompactReviewOutput):
+    """模型仅返回意见；逐条规范状态由平台推导。"""

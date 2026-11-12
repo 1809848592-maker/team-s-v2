@@ -9,9 +9,13 @@ from uuid import UUID, uuid4
 
 from app.review.citation_databases import CitationQuery, CitationVerification
 from app.review.extract_types import ExtractedDocument, TextLocation
-from app.review.reviewers.citation_types import (
-    CitationAlignmentOutput,
-    CitationExtractionOutput,
+from app.review.reviewers.citation_types import CitationExcerpt, ExtractedReference
+from app.review.reviewers.contract import (
+    AdaptedOutput,
+    adapt_findings,
+    excerpt_matches,
+    segment_inputs,
+    segment_sources,
 )
 from app.review.reviewers.executor import ReviewerExecutor, _safe_json
 from app.review.reviewers.instructions import load_citation_instruction
@@ -40,135 +44,269 @@ def _cache_text(value):
     return " ".join(unicodedata.normalize("NFKC", value).casefold().split())
 
 
-def _segment_text(location, document):
-    coordinates = location.model_dump(exclude={"description"})
-    if coordinates["part"] is None:
-        raise ValueError
-    texts = tuple(
-        segment.text
-        for segment in document.segments
-        if all(coordinates[key] == getattr(segment.location, key) for key in _COORDINATES)
+def _has_valid_coverage_notes(response):
+    notes = response.get("coverage_notes")
+    return isinstance(notes, list) and any(
+        isinstance(note, str) and 0 < len(note.strip()) <= 1000 and "\0" not in note
+        for note in notes[:100]
     )
-    if not texts:
-        raise ValueError
-    return texts
 
 
 def _reference_text(reference):
     return "\n".join(piece.excerpt for piece in reference.evidence)
 
 
-def _validate_extraction(output, document):
-    if not isinstance(output, CitationExtractionOutput) or output.findings:
-        raise ValueError
-    if len({reference.reference_id for reference in output.references}) != len(output.references):
-        raise ValueError
-    if output.bibliography_status == "complete" and not output.references:
-        raise ValueError
-    if output.bibliography_status in {"absent", "unreadable"} and output.references:
-        raise ValueError
-    if not document.segments and output.bibliography_status != "unreadable":
-        raise ValueError
+def _metadata(raw):
+    """只解析当前原文中明确的APA或GB/T结构；歧义保留为空。"""
+    text = unicodedata.normalize("NFKC", raw).strip()
+    text = "\n".join(
+        line for line in text.splitlines() if line.strip() not in _BIBLIOGRAPHY_HEADINGS
+    ).strip()
+    text = re.sub(r"^\[\d+\]\s*", "", text)
+    doi_match = _DOI.search(text)
+    doi = doi_match.group().rstrip(".,;。") if doi_match else None
+    title, authors, year = None, (), None
+    apa = re.fullmatch(r"(.{1,400}?)\s*\((1[0-9]{3}|2[0-9]{3})[a-z]?\)\s*[.。]?\s*(.+)", text, re.S)
+    if apa:
+        author_text, raw_year, rest = apa.groups()
+        # 标题与刊物有明确句号边界才提取题名，不把整条当成标题。
+        title_match = re.match(r"(.{1,1000}?)(?:\.\s|。|$)", rest.strip())
+        if title_match:
+            title = title_match.group(1).strip().rstrip(".")
+        authors = tuple(
+            value.strip().rstrip(".")
+            for value in re.split(r"\s+(?:&|and)\s+|;", author_text)
+            if value.strip()
+        )
+        year = int(raw_year)
+    else:
+        # GB/T以文献类型标记明确分隔题名，避免在作者缩写处猜测句点。
+        gb = re.match(r"(.{1,400}?)\.\s*(.{1,1000}?)\s*\[[A-Z](?:/[A-Z]+)?\](.*)", text, re.S)
+        if gb:
+            author_text, title, rest = gb.groups()
+            authors = tuple(
+                value.strip() for value in re.split(r"[,，;；]", author_text) if value.strip()
+            )
+            years = re.findall(r"(?<!\d)(?:1[0-9]{3}|2[0-9]{3})(?!\d)", rest)
+            year = int(years[0]) if len(set(years)) == 1 else None
+    # 不可靠或过长元数据不能触发“查无此条”。DOI仍仅来自原文。
+    if (
+        not title
+        or len(title) > 1000
+        or not authors
+        or len(authors) > 20
+        or any(len(value) > 1000 for value in authors)
+    ):
+        title, authors, year = None, (), None
+    return {"title": title, "authors": authors, "year": year, "doi": doi}
+
+
+def _extract_references(response, document):
+    adapted = adapt_findings(
+        response,
+        category="citation",
+        document=document,
+        expected={"reference": {"available": bool(document.segments), "sources": set()}},
+        sources={},
+        severities=("suggestion",),
+    )
+    references, errors = [], list(adapted.errors)
     used = set()
-    for reference in output.references:
-        for piece in reference.evidence:
-            if not any(piece.excerpt in text for text in _segment_text(piece.location, document)):
-                raise ValueError
-            identity = (*[getattr(piece.location, key) for key in _COORDINATES], piece.excerpt)
-            if identity in used:
-                raise ValueError
-            used.add(identity)
+    for index, finding in enumerate(adapted.findings):
+        raw = finding.basis.excerpt
+        identity = (finding.location.model_dump_json(), raw)
+        if identity in used:
+            errors.append({"path": f"findings.{index}", "code": "duplicate_reference"})
+            continue
+        used.add(identity)
+        metadata = (
+            _metadata(raw)
+            if finding.basis.excerpt_verified
+            else {
+                "title": None,
+                "authors": (),
+                "year": None,
+                "doi": None,
+            }
+        )
+        references.append(
+            ExtractedReference(
+                reference_id=f"R{len(references) + 1}",
+                evidence=(CitationExcerpt(location=finding.location, excerpt=raw),),
+                excerpt_verified=finding.basis.excerpt_verified,
+                **metadata,
+            )
+        )
+    discarded = adapted.discarded_count + len(adapted.findings) - len(references)
+    coverage = adapted.coverage
+    if discarded > adapted.discarded_count:
+        coverage = coverage.model_copy(
+            update={
+                "uncovered": tuple(
+                    dict.fromkeys((*coverage.uncovered, f"{discarded} 条意见因格式无效未采用。"))
+                )[:100],
+            }
+        )
+    # 识别结果是平台内部元数据，不能作为引用问题意见汇入报告。
+    output = AdaptedOutput(
+        findings=(),
+        coverage=coverage,
+        errors=tuple(errors),
+        discarded_count=discarded,
+        incomplete=adapted.incomplete
+        or (bool(adapted.findings) and not references and not _has_valid_coverage_notes(response)),
+    )
+    return output, references
+
+
+def _adapt_alignment(response, references, document):
+    """保留原引用判据：文献表不能冒充正文，R编号必须关联本轮文献。"""
+    sources = {reference.reference_id: _reference_text(reference) for reference in references}
+    segments = segment_sources(document)
+    filtered, semantic_errors, original_indexes = [], [], []
+    raw_findings = response.get("findings")
+    if isinstance(raw_findings, list):
+        for index, value in enumerate(raw_findings):
+            invalid = False
+            if (
+                isinstance(value, dict)
+                and isinstance(value.get("segment_id"), str)
+                and value["segment_id"] in segments
+            ):
+                _, coordinates = segments[value["segment_id"]]
+                related = [
+                    reference
+                    for reference in references
+                    if any(
+                        all(
+                            getattr(piece.location, key) == coordinates.get(key)
+                            for key in _COORDINATES
+                        )
+                        for piece in reference.evidence
+                    )
+                ]
+                kind = value.get("check_key")
+                excerpt = value.get("excerpt")
+                context_key = value.get("context_key")
+                if (
+                    isinstance(kind, str)
+                    and kind in {"missing_reference", "support_insufficient"}
+                    and isinstance(excerpt, str)
+                ):
+                    invalid = any(
+                        excerpt_matches(excerpt, _reference_text(reference))
+                        for reference in related
+                    )
+                if kind == "missing_reference" and (
+                    context_key is not None or value.get("context_excerpt") is not None
+                ):
+                    invalid = True
+                if kind == "uncited_reference":
+                    invalid = (
+                        not isinstance(context_key, str)
+                        or context_key not in sources
+                        or not any(reference.reference_id == context_key for reference in related)
+                    )
+                    # 普通摘录未核对仍保留；已核对却引用了同片段另一文献才是错误关联。
+                    if not invalid and isinstance(excerpt, str):
+                        actual = segments[value["segment_id"]][0]
+                        invalid = excerpt_matches(excerpt, actual) and not excerpt_matches(
+                            excerpt, sources[context_key]
+                        )
+            if invalid:
+                semantic_errors.append(
+                    {"path": f"findings.{index}", "code": "citation_evidence_invalid"}
+                )
+            else:
+                filtered.append(value)
+                original_indexes.append(index)
+    adapted = adapt_findings(
+        {**response, "findings": filtered} if isinstance(raw_findings, list) else response,
+        category="citation",
+        document=document,
+        expected={
+            key: {"available": bool(document.segments), "sources": set(sources)}
+            for key in (
+                "missing_reference",
+                "uncited_reference",
+                "support_insufficient",
+            )
+        },
+        sources=sources,
+    )
+    if not semantic_errors:
+        return adapted
+    discarded = adapted.discarded_count + len(semantic_errors)
+    notes = tuple(
+        dict.fromkeys((*adapted.coverage.uncovered, f"{discarded} 条意见因格式无效未采用。"))
+    )[:100]
+    errors = []
+    for error in adapted.errors:
+        match = re.match(r"findings\.(\d+)(.*)", error["path"])
+        if match and int(match[1]) < len(original_indexes):
+            error = {**error, "path": f"findings.{original_indexes[int(match[1])]}{match[2]}"}
+        errors.append(error)
+    return AdaptedOutput(
+        findings=adapted.findings,
+        coverage=adapted.coverage.model_copy(update={"uncovered": notes}),
+        checks=adapted.checks,
+        finding_links=adapted.finding_links,
+        errors=(*errors, *semantic_errors),
+        discarded_count=discarded,
+        incomplete=adapted.incomplete
+        or (not adapted.findings and not _has_valid_coverage_notes(response)),
+    )
+
+
+def _correspondence(references, document, links):
+    result = []
+    for reference in references:
+        evidence_locations = {
+            tuple(getattr(piece.location, key) for key in _COORDINATES)
+            for candidate in references
+            for piece in candidate.evidence
+        }
+        citations = []
         raw = _reference_text(reference)
-        if len(raw) > 4000:
-            raise ValueError
-        normalized = _normalized(raw)
-        for field in (reference.title, *reference.authors):
-            if field is not None and (
-                not _normalized(field) or _normalized(field) not in normalized
-            ):
-                raise ValueError
-        if reference.year is not None and str(reference.year) not in raw:
-            raise ValueError
-        if reference.doi is not None and (
-            _DOI.fullmatch(reference.doi) is None or reference.doi.casefold() not in raw.casefold()
-        ):
-            raise ValueError
-
-
-def _validate_alignment(output, references, document):
-    if not isinstance(output, CitationAlignmentOutput):
-        raise ValueError
-    expected = {reference.reference_id: reference for reference in references}
-    checks = {check.reference_id: check for check in output.checks}
-    if set(checks) != set(expected) or len(checks) != len(output.checks):
-        raise ValueError
-    for check in output.checks:
-        if (check.status == "matched") != bool(check.citations):
-            raise ValueError
-        for citation in check.citations:
-            if not any(
-                citation.excerpt in text for text in _segment_text(citation.location, document)
-            ):
-                raise ValueError
-            if any(
-                all(
-                    getattr(piece.location, key) == getattr(citation.location, key)
-                    for key in _COORDINATES
-                )
-                and citation.excerpt in piece.excerpt
-                for reference in references
-                for piece in reference.evidence
-            ):
-                raise ValueError
-    links = {link.finding_index: link for link in output.issue_links}
-    if set(links) != set(range(len(output.findings))) or len(links) != len(output.issue_links):
-        raise ValueError
-    uncited = set()
-    for index, finding in enumerate(output.findings):
-        if (
-            finding.category != "citation"
-            or finding.severity not in {"important", "suggestion"}
-            or finding.basis.spec_number is not None
-            or finding.basis.excerpt is None
-            or not any(
-                finding.basis.excerpt in text for text in _segment_text(finding.location, document)
+        marker = re.match(r"\s*\[(\d+)\]", raw)
+        surname = re.split(r"[,\s]", reference.authors[0])[0] if reference.authors else ""
+        for segment in document.segments:
+            if tuple(getattr(segment.location, key) for key in _COORDINATES) in evidence_locations:
+                continue
+            numeric = bool(marker and re.search(r"\[\s*" + marker[1] + r"\s*\]", segment.text))
+            author_year = bool(
+                surname
+                and reference.year
+                and surname.casefold() in segment.text.casefold()
+                and str(reference.year) in segment.text
             )
-        ):
-            raise ValueError
-        link = links[index]
-        if link.reference_id is not None and link.reference_id not in expected:
-            raise ValueError
-        if link.kind == "missing_reference" and link.reference_id is not None:
-            raise ValueError
-        if link.kind == "uncited_reference":
-            if link.reference_id is None:
-                raise ValueError
-            reference = expected[link.reference_id]
-            if not any(
-                all(
-                    getattr(piece.location, key) == getattr(finding.location, key)
-                    for key in _COORDINATES
+            if numeric or author_year:
+                citations.append(
+                    {
+                        "location": {
+                            "description": "平台识别的正文引用",
+                            **asdict(segment.location),
+                        },
+                        "excerpt": segment.text[:4000],
+                    }
                 )
-                and finding.basis.excerpt in piece.excerpt
-                for piece in reference.evidence
-            ):
-                raise ValueError
-            uncited.add(link.reference_id)
-        elif any(
-            all(
-                getattr(piece.location, key) == getattr(finding.location, key)
-                for key in _COORDINATES
-            )
-            and finding.basis.excerpt in piece.excerpt
-            for reference in references
-            for piece in reference.evidence
-        ):
-            # 正文缺引/支撑疑点不能用文献表本身充当论断或引用标记。
-            raise ValueError
-    if any((check.status == "uncited") != (number in uncited) for number, check in checks.items()):
-        raise ValueError
-    if not document.segments and output.coverage.checked:
-        raise ValueError
+        uncited = any(
+            link["kind"] == "uncited_reference" and link["reference_id"] == reference.reference_id
+            for link in links
+        )
+        result.append(
+            {
+                "reference_id": reference.reference_id,
+                "status": "uncited" if uncited else "matched" if citations else "uncovered",
+                "reason": "本条有未引用意见。"
+                if uncited
+                else "在有限可读正文中识别到编号或作者年份对应，不证明全文支撑。"
+                if citations
+                else "当前材料未能可靠建立正文引用对应。",
+                "citations": [] if uncited else citations[:20],
+            }
+        )
+    return result
 
 
 def _database_finding(reference, verification, document_hash):
@@ -303,7 +441,12 @@ def review_citations(
         context = {
             "plan": plan,
             "specification": specification,
-            "delivery": {**document.to_dict(), "handoff_note": handoff_note},
+            "delivery": {
+                "sha256": document.sha256,
+                "format": document.format,
+                "segments": segment_inputs(document),
+                "handoff_note": handoff_note,
+            },
         }
         _safe_json(
             {**context, "history": [record.model_dump(mode="json") for record in historical]}
@@ -316,20 +459,29 @@ def review_citations(
     extracted = []
     bibliography = []
 
-    def validate_extraction(output):
-        _validate_extraction(output, document)
-        extracted[:] = output.references
-        bibliography[:] = [output.bibliography_status]
+    def adapt_extraction(output):
+        adapted, references = _extract_references(output, document)
+        extracted[:] = references
+        bibliography[:] = [
+            "unreadable"
+            if not document.segments
+            else "partial"
+            if adapted.errors
+            else "complete"
+            if references
+            else "absent"
+        ]
+        return adapted
 
     executor = ReviewerExecutor(client)
-    extraction = executor.run(
+    extraction = executor.run_compact(
         project_id=project_id,
         job_id=job_id,
         reviewer="citation_extract",
         instruction=load_citation_instruction("citation_extract"),
         context=context,
         history=historical,
-        validate_output=validate_extraction,
+        adapt_output=adapt_extraction,
     )
     report["extraction"] = extraction.to_dict()
     if extraction.status != "completed":
@@ -352,7 +504,15 @@ def review_citations(
             (query.doi or "").casefold(),
             query.is_chinese,
         )
-        if key not in cache:
+        if not reference.excerpt_verified or not (
+            query.doi or (query.title and query.authors and query.year)
+        ):
+            verification = {
+                "status": "unverified",
+                "reason": "原文摘录或元数据未能可靠核对，未作数据库否证。",
+                "sources": [],
+            }
+        elif key not in cache:
             if (
                 len(cache) >= MAX_DATABASE_QUERIES
                 or time.monotonic() - started >= DATABASE_BUDGET_SECONDS
@@ -380,7 +540,12 @@ def review_citations(
                 ):
                     database_error = database_error or "database_unavailable"
             cache[key] = verification
-        verification = cache[key]
+        if (
+            key in cache
+            and reference.excerpt_verified
+            and (query.doi or (query.title and query.authors and query.year))
+        ):
+            verification = cache[key]
         source = {
             "reviewer": extraction.reviewer,
             "instruction_version": extraction.instruction_version,
@@ -401,21 +566,40 @@ def review_citations(
             database_findings.append(_database_finding(reference, verification, document.sha256))
     alignment_data = []
 
-    def validate_alignment(output):
-        _validate_alignment(output, extracted, document)
-        alignment_data[:] = [output]
+    def adapt_alignment(output):
+        adapted = _adapt_alignment(output, extracted, document)
+        links = [
+            {
+                "finding_index": value["finding_index"],
+                "kind": value["check_key"],
+                "reference_id": value["context_refs"][0]["key"] if value["context_refs"] else None,
+            }
+            for value in adapted.finding_links
+        ]
+        alignment_data[:] = [(_correspondence(extracted, document, links), links)]
+        return adapted
 
-    alignment = executor.run(
+    alignment = executor.run_compact(
         project_id=project_id,
         job_id=job_id,
         reviewer="citation_alignment",
         instruction=load_citation_instruction("citation_alignment"),
         context={
             **context,
-            "delivery": {**context["delivery"], "references": report["references"]},
+            "delivery": {
+                **context["delivery"],
+                "references": [
+                    {
+                        "reference_id": value["reference_id"],
+                        "raw_reference": value["raw_reference"],
+                        "verification": value["verification"],
+                    }
+                    for value in report["references"]
+                ],
+            },
         },
         history=historical,
-        validate_output=validate_alignment,
+        adapt_output=adapt_alignment,
     )
     report["alignment"] = alignment.to_dict()
     for stage in (extraction, alignment):
@@ -448,7 +632,7 @@ def review_citations(
     report.update(
         status="completed",
         database_findings=database_findings,
-        checks=[check.model_dump(mode="json") for check in alignment_data[0].checks],
-        issue_links=[link.model_dump(mode="json") for link in alignment_data[0].issue_links],
+        checks=alignment_data[0][0],
+        issue_links=alignment_data[0][1],
     )
     return report

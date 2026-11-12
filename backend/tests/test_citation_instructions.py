@@ -13,6 +13,7 @@ from app.review.reviewers.citation_types import (
     CitationAlignmentOutput,
     CitationExtractionOutput,
 )
+from app.review.reviewers.contract import CompactReviewOutput
 from app.review.reviewers.instructions import ReviewerInstructionError, load_citation_instruction
 
 STAGES = {
@@ -27,10 +28,11 @@ def test_packaged_citation_stages_validate_positive_examples_and_preserve_six_fi
 ):
     bundle = load_citation_instruction(stage)
     assert bundle.reviewer == stage
-    assert bundle.version == "2026-11-12.1"
-    assert bundle.output_model is model
-    assert len(bundle.positive_examples) == 3
-    assert len(bundle.negative_examples) == 2
+    assert bundle.version == "2026-11-12.3"
+    assert bundle.output_model is CompactReviewOutput
+    assert 1 <= len(bundle.positive_examples) <= 2
+    assert bundle.negative_examples
+    assert len(bundle.system_text()) < 3000
     assert len(bundle.system_text().encode()) < loader.MAX_INSTRUCTION_BYTES
     for example in bundle.positive_examples:
         model.model_validate_json(json.dumps(example["output"], ensure_ascii=False))
@@ -86,7 +88,7 @@ def test_citation_resource_corruption_stays_fixed_safe_error(
     )
     data = {
         "identity": raw.replace(f'reviewer = "{stage}"'.encode(), b'reviewer = "unknown"'),
-        "version": raw.replace(b"2026-11-12.1", b"2026-11-13.1"),
+        "version": raw.replace(b"2026-11-12.3", b"2026-11-13.1"),
         "encoding": b"\xffPRIVATE_RESOURCE_CONTENT",
         "size": b"#" * (loader.MAX_INSTRUCTION_BYTES + 1),
         "missing": raw,

@@ -3,6 +3,7 @@
 import httpx2
 
 from app.config import Settings
+from app.review.debug_records import LocalReviewDebugStore
 from app.review.llm import LLMClient
 from app.review.model_config import ModelConfiguration
 from app.services.llm_usage import QuotaLimits
@@ -21,6 +22,7 @@ def build_llm_client(
         secrets={"DEEPSEEK_API_KEY": settings.deepseek_api_key},
         live_enabled=settings.llm_enable_live_calls,
         transport=transport,
+        debug_store=LocalReviewDebugStore(settings.review_debug_path),
         quota_limits=QuotaLimits(
             project_daily_reviews=settings.llm_project_daily_reviews,
             platform_daily_reviews=settings.llm_platform_daily_reviews,

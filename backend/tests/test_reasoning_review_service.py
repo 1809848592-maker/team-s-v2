@@ -541,20 +541,7 @@ def request_data(payload, kind):
 def output_for(payload, reviewer, *, finding=True):
     plan = request_data(payload, "bound_plan")
     sources = {entry["key"]: entry["text"] for entry in plan["context_sources"]}
-    checks = [
-        {
-            "key": item["key"],
-            "status": "checked" if item["available"] else "uncovered",
-            "reason": "仅核对固定测试实际提供的范围。",
-        }
-        for item in plan["expected_checks"]
-    ]
-    output = {
-        "findings": [],
-        "coverage": {"checked": ["固定可读正文及绑定上下文"], "uncovered": ["原始数据与外部全文"]},
-        "checks": checks,
-        "finding_links": [],
-    }
+    output = {"findings": [], "coverage_notes": ["原始数据与外部全文未核验。"]}
     if not finding:
         return output
     if reviewer == "logic":
@@ -562,27 +549,17 @@ def output_for(payload, reviewer, *, finding=True):
     else:
         key = next(key for key, text in sources.items() if key.startswith("upstream:") and text)
         reference = key
-    next(item for item in checks if item["key"] == key)["status"] = "issues"
+    segment = request_data(payload, "delivery")["segments"][0]
     output["findings"] = [
         {
-            "category": reviewer,
-            "severity": "important" if reviewer == "logic" else "suggestion",
-            "location": {
-                "description": "固定当前正文第1行",
-                "part": "markdown",
-                "line_start": 1,
-                "line_end": 1,
-            },
-            "problem": "当前文字与已给依据存在需要核对的缺口。",
-            "basis": {"excerpt": PRIVATE},
-            "suggestion": "对照所给依据补充说明。",
-        }
-    ]
-    output["finding_links"] = [
-        {
-            "finding_index": 0,
             "check_key": key,
-            "context_refs": [{"key": reference, "excerpt": sources[reference]}],
+            "severity": "important" if reviewer == "logic" else "suggestion",
+            "segment_id": segment["segment_id"],
+            "problem": "当前文字与已给依据存在需要核对的缺口。",
+            "excerpt": segment["text"],
+            "suggestion": "对照所给依据补充说明。",
+            "context_key": reference,
+            "context_excerpt": sources[reference],
         }
     ]
     return output

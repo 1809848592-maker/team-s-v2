@@ -83,13 +83,13 @@ def _input_messages(instruction, context, history):
             validated = HistoricalOpinion.model_validate_json(_safe_json(record))
         historical.append(validated.model_dump(mode="json"))
     combined = _safe_json({**context, "history": historical})
-    system = (
-        instruction.system_text()
-        + "\n输出JSON结构（严格遵守）：\n"
-        + json.dumps(
+    from app.review.reviewers.contract import CompactReviewOutput
+
+    system = instruction.system_text()
+    if instruction.output_model is not CompactReviewOutput:
+        system += "\n输出JSON结构（严格遵守）：\n" + json.dumps(
             instruction.output_model.model_json_schema(), ensure_ascii=False, sort_keys=True
         )
-    )
     messages = [{"role": "system", "content": system}]
     for kind, value in (
         ("bound_plan", context["plan"]),
@@ -117,6 +117,175 @@ def _message_hash(messages):
 class ReviewerExecutor:
     def __init__(self, client: LLMClient):
         self.client = client
+
+    def run_compact(
+        self,
+        *,
+        project_id: UUID,
+        job_id: UUID,
+        reviewer: str,
+        instruction: InstructionBundle,
+        context: dict,
+        history: list[HistoricalOpinion | dict] | tuple[HistoricalOpinion | dict, ...],
+        adapt_output: Callable,
+    ) -> ReviewerResult:
+        """14.9逐条意见适配；唯一重试用于无法解析的JSON，不循环语义修复。"""
+        from app.review.reviewers.contract import AdaptedOutput
+
+        profile = self.client.configuration.reviewers.get(reviewer)
+        if profile is None or instruction.reviewer != reviewer:
+            raise LLMConfigurationError
+        metadata = {
+            "reviewer": reviewer,
+            "instruction_version": instruction.version,
+            "model": profile.model,
+            "instruction_hash": hashlib.sha256(instruction.system_text().encode()).hexdigest(),
+        }
+        attempts, context_hash = [], None
+
+        def incomplete(code, coverage=None):
+            return ReviewerResult(
+                **metadata,
+                status="incomplete",
+                context_hash=context_hash,
+                findings=(),
+                coverage=coverage,
+                attempts=tuple(attempts),
+                error_code=code,
+            )
+
+        try:
+            if not isinstance(project_id, UUID) or not isinstance(job_id, UUID):
+                raise _InputError
+            messages, context_hash = _input_messages(instruction, context, history)
+            metadata["instruction_hash"] = hashlib.sha256(
+                messages[0]["content"].encode()
+            ).hexdigest()
+        except (ValueError, TypeError, UnicodeError, RecursionError):
+            return incomplete("input_invalid")
+        for number in range(2):
+            call_id, input_hash = uuid4(), _message_hash(messages)
+            try:
+                response = self.client.complete_json(
+                    project_id=project_id,
+                    job_id=job_id,
+                    reviewer=reviewer,
+                    instruction_version=instruction.version,
+                    messages=messages,
+                    call_id=call_id,
+                )
+                adapted = adapt_output(response)
+                if not isinstance(adapted, AdaptedOutput):
+                    raise TypeError
+                if adapted.errors and hasattr(self.client, "record_review_debug"):
+                    self.client.record_review_debug(
+                        call_id=call_id,
+                        project_id=project_id,
+                        job_id=job_id,
+                        reviewer=reviewer,
+                        instruction_version=instruction.version,
+                        errors=list(adapted.errors),
+                    )
+                if adapted.incomplete:
+                    attempts.append(
+                        ReviewerAttempt(
+                            call_id=call_id,
+                            input_hash=input_hash,
+                            outcome="invalid_structure",
+                            error_code="output_invalid",
+                        )
+                    )
+                    return incomplete("output_invalid", adapted.coverage)
+                attempts.append(
+                    ReviewerAttempt(
+                        call_id=call_id,
+                        input_hash=input_hash,
+                        outcome="completed",
+                    )
+                )
+                return ReviewerResult(
+                    **metadata,
+                    status="completed",
+                    context_hash=context_hash,
+                    findings=tuple(
+                        RecordedOpinion(
+                            **finding.model_dump(),
+                            **metadata,
+                            finding_id=uuid4(),
+                            input_hash=input_hash,
+                            call_id=call_id,
+                        )
+                        for finding in adapted.findings
+                    ),
+                    coverage=adapted.coverage,
+                    attempts=tuple(attempts),
+                    error_code=None,
+                )
+            except QuotaExceededError:
+                raise
+            except LLMRequestError as error:
+                parse_failure = error.code in {
+                    "content_invalid",
+                    "content_empty",
+                    "response_invalid",
+                }
+                attempts.append(
+                    ReviewerAttempt(
+                        call_id=call_id,
+                        input_hash=input_hash,
+                        outcome="invalid_structure" if parse_failure else "failed",
+                        error_code="output_invalid" if parse_failure else error.code,
+                    )
+                )
+                if parse_failure and number == 0:
+                    messages = [
+                        *messages,
+                        {
+                            "role": "user",
+                            "content": (
+                                "上一次响应无法解析为JSON对象，请仅输出findings数组和coverage_notes字符串数组，"
+                                "使用系统所列字段，不输出其他文字。"
+                            ),
+                        },
+                    ]
+                    continue
+                return incomplete("output_invalid" if parse_failure else error.code)
+            except (LLMDisabledError, LLMConfigurationError, LLMUsageError):
+                attempts.append(
+                    ReviewerAttempt(
+                        call_id=call_id,
+                        input_hash=input_hash,
+                        outcome="failed",
+                        error_code="model_unavailable",
+                    )
+                )
+                return incomplete("model_unavailable")
+            except Exception:
+                if hasattr(self.client, "record_review_debug"):
+                    try:
+                        self.client.record_review_debug(
+                            call_id=call_id,
+                            project_id=project_id,
+                            job_id=job_id,
+                            reviewer=reviewer,
+                            instruction_version=instruction.version,
+                            errors=[{"path": "$", "code": "adapter_failed"}],
+                        )
+                    except Exception:
+                        pass  # 该审核员仍未完成，绝不将记录失败当通过。
+                attempts.append(
+                    ReviewerAttempt(
+                        call_id=call_id,
+                        input_hash=input_hash,
+                        outcome="failed",
+                        error_code="execution_failed",
+                    )
+                )
+                return incomplete("execution_failed")
+            finally:
+                if hasattr(self.client, "release_review_capture"):
+                    self.client.release_review_capture(call_id)
+        return incomplete("output_invalid")
 
     def run(
         self,

@@ -42,6 +42,12 @@ class OpinionLocation(ReviewSchema):
 class OpinionBasis(ReviewSchema):
     spec_number: Label | None = None
     excerpt: Text | None = None
+    excerpt_verified: bool | None = Field(default=None, exclude_if=lambda value: value is None)
+    context_key: Label | None = Field(default=None, exclude_if=lambda value: value is None)
+    context_excerpt: Text | None = Field(default=None, exclude_if=lambda value: value is None)
+    context_excerpt_verified: bool | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @model_validator(mode="after")
     def has_basis(self):

@@ -29,7 +29,13 @@ from zipfile import ZIP_DEFLATED, ZipFile
 ROOT = Path(__file__).resolve().parents[1]
 BACKEND = ROOT / "backend"
 CSRF = {"X-CSRF-Protection": "1"}
-REVIEWERS = ("spec_compliance", "citation_extract", "citation_alignment", "logic", "linkage")
+REVIEWERS = (
+    "spec_compliance",
+    "citation_extract",
+    "citation_alignment",
+    "logic",
+    "linkage",
+)
 TERM = "协作负荷"
 BAD_TERM = "本报告将协作负荷定义为团队成员年龄的总和。"
 LOAD_DEFINITION = "审核前一个自然日内团队需要处理的任务交接数量"
@@ -119,6 +125,27 @@ def require_run_token_budget(rows, *, token_budget, next_reserved_tokens):
     )
 
 
+def citation_alignment_preseed_hit(result):
+    """预埋论据缺口在第3段；context按14.9可选，不能多加R编号条件。"""
+    own = result.get("alignment")
+    if not isinstance(own, dict) or own.get("status") != "completed":
+        return False
+    findings = own.get("findings", [])
+    for link in result.get("issue_links", []):
+        index = link.get("finding_index")
+        if type(index) is not int or not 0 <= index < len(findings):
+            continue
+        finding = findings[index]
+        if (
+            link.get("kind") == "support_insufficient"
+            and finding.get("severity") == "important"
+            and finding.get("location", {}).get("paragraph") == 3
+            and finding.get("basis", {}).get("excerpt_verified") is True
+        ):
+            return True
+    return False
+
+
 def write_json(path, value, *, sensitive=None):
     encoded = json.dumps(value, ensure_ascii=False, indent=2, default=str)
     if sensitive:
@@ -192,7 +219,10 @@ def document_bytes(paragraphs, *, correct_font):
 def read_explicit_key(path):
     require(path is not None and path.is_absolute(), "live_requires_absolute_key_file")
     require(path.resolve() == ROOT / ".env", "key_file_must_be_platform_dotenv")
-    require(path.is_file() and path.stat().st_size <= 65536, "key_file_unavailable_or_too_large")
+    require(
+        path.is_file() and path.stat().st_size <= 65536,
+        "key_file_unavailable_or_too_large",
+    )
     # Read one literal assignment, never source a shell or expand/interpolate other values.
     matches = []
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -219,21 +249,28 @@ def parser():
     )
     result.add_argument("--key-file", type=Path, help="Live only: absolute platform/.env path")
     result.add_argument("--output-dir", type=Path, default=ROOT / ".verification/M3-acceptance")
-    result.add_argument("--max-model-calls", type=int, default=29, choices=range(1, 30))
-    result.add_argument("--token-budget", type=int, default=300000)
+    result.add_argument("--max-model-calls", type=int, default=60, choices=range(1, 61))
+    result.add_argument("--token-budget", type=int, default=2000000)
     result.add_argument("--model-timeout-seconds", type=int)
+    result.add_argument("--layer", choices=("reviewers", "e2e"), default="e2e")
     return result
 
 
 def main(argv=None):
     arguments = parser().parse_args(argv)
     require(Path.cwd() == BACKEND, "run_from_platform_backend")
-    require(10000 <= arguments.token_budget <= 500000, "token_budget_must_be_10000_to_500000")
+    require(
+        10000 <= arguments.token_budget <= 2000000,
+        "token_budget_must_be_10000_to_2000000",
+    )
     require(
         arguments.model_timeout_seconds is None or 1 <= arguments.model_timeout_seconds <= 180,
         "model_timeout_must_be_1_to_180_seconds",
     )
-    require(arguments.mode == "live" or arguments.key_file is None, "mock_never_reads_key_files")
+    require(
+        arguments.mode == "live" or arguments.key_file is None,
+        "mock_never_reads_key_files",
+    )
     sys.path.insert(0, str(BACKEND))
     # Neutralize ambient settings before importing app.db/main. Never implicitly open any .env.
     os.environ["DATABASE_URL"] = arguments.database_url
@@ -253,12 +290,17 @@ def main(argv=None):
 
     from app.db import get_session
     from app.main import create_app
-    from app.models import Base, DailyBudget, DeliveryWorkflow, ModelCall
+    from app.models import Base, DailyBudget, DeliveryWorkflow, ModelCall, ReviewJob
     from app.review.citation_databases import CitationDatabaseClient, CitationQuery
+    from app.review.debug_records import LocalReviewDebugStore
     from app.review.llm import LLMClient
     from app.review.model_config import load_model_config
     from app.review.runner import DeliveryReviewInput
-    from app.services.llm_usage import LLMCallLimitError, QuotaExceededError, QuotaLimits
+    from app.services.llm_usage import (
+        LLMCallLimitError,
+        QuotaExceededError,
+        QuotaLimits,
+    )
     from app.services.review_jobs import claim_next, complete_job
     from app.services.review_pipeline import execute_pipeline
     from app.storage import LocalStorage
@@ -266,7 +308,7 @@ def main(argv=None):
     url = make_url(arguments.database_url)
     require(url.get_backend_name() == "postgresql", "postgresql_required")
     require(
-        bool(re.search(r"(?:test|smoke|accept)", url.database or "", re.I)),
+        bool(re.search(r"(?:test|smoke|accept)", url.database or "", re.IGNORECASE)),
         "explicit_test_database_required",
     )
     require(url.host in {"localhost", "127.0.0.1", "::1"}, "local_test_database_required")
@@ -277,6 +319,13 @@ def main(argv=None):
             configuration.reviewers[name].endpoint == "https://api.deepseek.com/chat/completions",
             "model_endpoint_not_allowed",
         )
+    from accept_m3_budget import BudgetExceeded, RevisionBudget
+
+    money = (
+        RevisionBudget(ROOT / ".verification/M3-16-live-budget.json")
+        if arguments.mode == "live"
+        else None
+    )
     key = (
         read_explicit_key(arguments.key_file)
         if arguments.mode == "live"
@@ -288,6 +337,8 @@ def main(argv=None):
     output.chmod(0o700)
     report = {
         "mode": arguments.mode,
+        "revision": "M3-16",
+        "layer": arguments.layer,
         "schema": f"accept_m3_{suffix}",
         "started_utc": datetime.now(UTC).isoformat(),
         "steps": [],
@@ -302,7 +353,11 @@ def main(argv=None):
             },
             "automatic_job_attempts": 1,
         },
-        "cleanup": {"schema_removed": False, "storage_removed": False, "http_stopped": False},
+        "cleanup": {
+            "schema_removed": False,
+            "storage_removed": False,
+            "http_stopped": False,
+        },
     }
     print(f"M3 {arguments.mode}: evidence {output}", flush=True)
     logging.getLogger("httpx2").setLevel(logging.CRITICAL)
@@ -315,10 +370,11 @@ def main(argv=None):
     listener = None
     storage_dir = None
     sessions = None
+    debug_store = None
     stack = ExitStack()
     model_events, bibliography_events = [], []
     status = {"disconnected": False, "reviewer": None, "stopped": None}
-    fixture_title = "Zqxv" + suffix
+    fixture_title = "ZqxvM316Acceptance20261112"
     reference = (
         f"[1] Smith, Z., & Novoid, Q. (2025). {fixture_title}. "
         "Journal of Imaginary Evidence, 99, 1-9."
@@ -348,127 +404,89 @@ def main(argv=None):
                     return value["data"]
         raise AcceptanceFailure("missing_model_typed_data")
 
-    def located(segment):
+    def opinion(check_key, segment, problem, suggestion, *, severity="important", **context):
         return {
-            "description": f"交付正文第{segment['location'].get('paragraph', 1)}段",
-            **segment["location"],
+            "check_key": check_key,
+            "severity": severity,
+            "segment_id": segment["segment_id"],
+            "problem": problem,
+            "excerpt": segment["text"],
+            "suggestion": suggestion,
+            **context,
         }
 
-    def opinion(category, segment, problem, suggestion):
-        return {
-            "category": category,
-            "severity": "important",
-            "location": located(segment),
-            "problem": problem,
-            "basis": {"excerpt": segment["text"]},
-            "suggestion": suggestion,
-        }
+    def mock_output(payload, name):
+        delivery = typed_data(payload, "delivery")
+        segments = delivery["segments"]
+        revised = any(GOOD_LOGIC in item["text"] for item in segments)
+        result = {"findings": [], "coverage_notes": ["外部全文及原始实证数据未核验。"]}
+        if name == "spec_compliance" and not revised:
+            segment = next(item for item in segments if BAD_LOGIC in item["text"])
+            result["findings"] = [
+                opinion("W1", segment, "把待检验假设写成已证实结论。", "明确为待检验假设。")
+            ]
+        elif name == "citation_extract" and not revised:
+            segment = next(item for item in segments if fixture_title in item["text"])
+            result["findings"] = [
+                opinion(
+                    "reference",
+                    segment,
+                    "参考文献条目。",
+                    "交由数据库核验。",
+                    severity="suggestion",
+                )
+            ]
+        elif name == "citation_alignment" and not revised:
+            segment = next(item for item in segments if "Smith 与 Novoid" in item["text"])
+            result["findings"] = [
+                opinion(
+                    "support_insufficient",
+                    segment,
+                    "当前引用未提供可支持普遍因果判断的证据。",
+                    "补充可核对证据或收窄结论。",
+                    context_key="R1",
+                    context_excerpt=reference,
+                )
+            ]
+        elif name == "logic" and any(BAD_LOGIC in item["text"] for item in segments):
+            segment = next(
+                item for item in segments if (GOOD_LOGIC if revised else BAD_LOGIC) in item["text"]
+            )
+            result["findings"] = [
+                opinion("support", segment, LOGIC_PROBLEM, "明确假设与证据边界。")
+            ]
+        elif name == "linkage" and not revised:
+            segment = next(item for item in segments if BAD_TERM in item["text"])
+            source = next(
+                item["text"]
+                for item in typed_data(payload, "bound_plan")["context_sources"]
+                if item["key"] == "term:0"
+            )
+            result["findings"] = [
+                opinion(
+                    "term:0",
+                    segment,
+                    "协作负荷的定义与方案术语表冲突。",
+                    "按方案恢复操作定义。",
+                    context_key="term:0",
+                    context_excerpt=source,
+                )
+            ]
+        return result
 
     def mock_model(request):
         require(request.url.host == "api.deepseek.com", "mock_model_host_mismatch")
         name = status["reviewer"]
         model_events.append(
-            {"reviewer": name, "disconnected": status["disconnected"], "real_network": False}
+            {
+                "reviewer": name,
+                "disconnected": status["disconnected"],
+                "real_network": False,
+            }
         )
         if status["disconnected"]:
             raise httpx2.ConnectError("M3 local intentional disconnect", request=request)
-        payload = json.loads(request.content)
-        delivery = typed_data(payload, "delivery")
-        segments = delivery["segments"]
-        revised = any(GOOD_LOGIC in item["text"] for item in segments)
-        coverage = {
-            "checked": ["验收合成正文及明确提供的上下文"],
-            "uncovered": ["外部全文及原始实证数据"],
-        }
-        result = {"findings": [], "coverage": coverage}
-        if name == "spec_compliance":
-            result["checks"] = [
-                {
-                    "spec_number": item["number"],
-                    "status": "checked",
-                    "reason": "已逐条核对合成交付。",
-                }
-                for item in typed_data(payload, "bound_specification")["items"]
-            ]
-        elif name == "citation_extract":
-            references = []
-            if not revised:
-                segment = next(item for item in segments if fixture_title in item["text"])
-                references.append(
-                    {
-                        "reference_id": "R1",
-                        "evidence": [{"location": located(segment), "excerpt": segment["text"]}],
-                        "title": fixture_title,
-                        "authors": ["Smith", "Novoid"],
-                        "year": 2025,
-                        "doi": None,
-                    }
-                )
-            result.update(
-                references=references, bibliography_status="absent" if revised else "complete"
-            )
-        elif name == "citation_alignment":
-            checks = []
-            for item in delivery.get("references", []):
-                segment = next(entry for entry in segments if "Smith 与 Novoid" in entry["text"])
-                checks.append(
-                    {
-                        "reference_id": item["reference_id"],
-                        "status": "matched",
-                        "reason": "引用标记与合成条目对应，存在性由程序独立核对。",
-                        "citations": [{"location": located(segment), "excerpt": segment["text"]}],
-                    }
-                )
-            result.update(checks=checks, issue_links=[])
-        else:
-            plan = typed_data(payload, "bound_plan")
-            checks = [
-                {
-                    "key": item["key"],
-                    "status": "checked" if item["available"] else "uncovered",
-                    "reason": "只核对当前提供的范围。",
-                }
-                for item in plan["expected_checks"]
-            ]
-            sources = {item["key"]: item["text"] for item in plan["context_sources"]}
-            result.update(checks=checks, finding_links=[])
-            if (name == "logic" and any(BAD_LOGIC in item["text"] for item in segments)) or (
-                name == "linkage" and not revised
-            ):
-                check_key = "support" if name == "logic" else "term:0"
-                segment = (
-                    next(
-                        item
-                        for item in segments
-                        if (GOOD_LOGIC if revised else BAD_LOGIC) in item["text"]
-                    )
-                    if name == "logic"
-                    else next(item for item in segments if BAD_TERM in item["text"])
-                )
-                finding = opinion(
-                    name,
-                    segment,
-                    LOGIC_PROBLEM if name == "logic" else "协作负荷的定义与方案术语表冲突。",
-                    "明确假设与证据边界。" if name == "logic" else "按方案恢复协作负荷的操作定义。",
-                )
-                result["findings"] = [finding]
-                next(item for item in checks if item["key"] == check_key)["status"] = "issues"
-                result["finding_links"] = [
-                    {
-                        "finding_index": 0,
-                        "check_key": check_key,
-                        "context_refs": []
-                        if name == "logic"
-                        else [{"key": check_key, "excerpt": sources[check_key]}],
-                    }
-                ]
-        usage = {
-            "prompt_tokens": 120,
-            "completion_tokens": 80,
-            "total_tokens": 200,
-            "prompt_cache_hit_tokens": 40,
-            "prompt_cache_miss_tokens": 80,
-        }
+        result = mock_output(json.loads(request.content), name)
         return httpx2.Response(
             200,
             json={
@@ -481,7 +499,13 @@ def main(argv=None):
                         },
                     }
                 ],
-                "usage": usage,
+                "usage": {
+                    "prompt_tokens": 120,
+                    "completion_tokens": 80,
+                    "total_tokens": 200,
+                    "prompt_cache_hit_tokens": 40,
+                    "prompt_cache_miss_tokens": 80,
+                },
             },
         )
 
@@ -490,7 +514,10 @@ def main(argv=None):
             request.url.host in {"api.crossref.org", "api.openalex.org"},
             "mock_bibliography_host_mismatch",
         )
-        require("authorization" not in request.headers, "bibliography_must_not_receive_model_key")
+        require(
+            "authorization" not in request.headers,
+            "bibliography_must_not_receive_model_key",
+        )
         bibliography_events.append({"provider": request.url.host, "real_network": False})
         body = (
             {
@@ -553,8 +580,20 @@ def main(argv=None):
                 self.backend.close()
                 self.backend = None
 
+    unit_target = None
+    unit_counts = defaultdict(int)
+    live_layer_claimed = False
+
     class BoundedClient(LLMClient):
         def complete_json(self, **kwargs):
+            nonlocal live_layer_claimed
+            if status["stopped"] is not None:
+                raise LLMCallLimitError("验收已停止，不再外发模型请求")
+            if unit_target is not None and kwargs["reviewer"] != unit_target:
+                # 单人真实测试仅此审核员外发；前后置阶段用固定替身，且不伪造用量流水。
+                return mock_output({"messages": kwargs["messages"]}, kwargs["reviewer"])
+            if unit_target is not None and unit_counts[unit_target] >= 3:
+                raise LLMCallLimitError("此审核员真实测试已达到3次上限")
             with sessions() as db:
                 rows = list(db.scalars(select(ModelCall)))
             if len(rows) >= arguments.max_model_calls:
@@ -573,11 +612,45 @@ def main(argv=None):
                 status["stopped"] = "total_run_token_budget"
                 raise
             status["reviewer"] = kwargs["reviewer"]
+            identity = kwargs["call_id"]
+            if money is not None and not status["disconnected"]:
+                if not live_layer_claimed:
+                    marker = ROOT / f".verification/M3-16-live-{arguments.layer}-started.json"
+                    try:
+                        descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    except FileExistsError:
+                        status["stopped"] = "live_layer_already_started_no_automatic_repeat"
+                        raise AcceptanceFailure(status["stopped"]) from None
+                    with os.fdopen(descriptor, "w") as stream:
+                        json.dump(
+                            {
+                                "revision": "M3-16",
+                                "layer": arguments.layer,
+                                "evidence": str(output),
+                                "started_utc": datetime.now(UTC).isoformat(),
+                            },
+                            stream,
+                        )
+                    live_layer_claimed = True
+                try:
+                    money.reserve(identity, kwargs["reviewer"], kwargs["messages"], profile)
+                except BudgetExceeded:
+                    status["stopped"] = "revision_10_cny_budget"
+                    raise
+            if unit_target is not None:
+                unit_counts[unit_target] += 1
             try:
                 return super().complete_json(**kwargs)
             except QuotaExceededError:
                 status["stopped"] = "total_token_or_review_quota"
                 raise
+            finally:
+                if money is not None and not status["disconnected"]:
+                    with sessions() as db:
+                        row = db.get(ModelCall, identity)
+                        cost = row.estimated_cost_cny if row is not None else None
+                    money.settle(identity, cost)
+                    evidence(output / "revision-budget.json", money.summary())
 
     def ledger():
         if sessions is None:
@@ -649,7 +722,10 @@ def main(argv=None):
                 "known_tokens": sum(row.total_tokens or 0 for row in rows),
                 "unknown_usage_calls": sum(row.total_tokens is None for row in rows),
                 "known_estimated_cost_cny": format(
-                    sum((row.estimated_cost_cny or Decimal(0) for row in rows), Decimal(0)),
+                    sum(
+                        (row.estimated_cost_cny or Decimal(0) for row in rows),
+                        Decimal(0),
+                    ),
                     ".10f",
                 ),
                 "unknown_cost_calls": sum(row.estimated_cost_cny is None for row in rows),
@@ -680,6 +756,9 @@ def main(argv=None):
             database_url=arguments.database_url,
             storage_dir=storage_dir,
             static_dir=output / "no-static",
+            review_debug_dir=ROOT / ".verification/M3-16-review-debug"
+            if arguments.mode == "live"
+            else None,
             llm_enable_live_calls=False,
             deepseek_api_key=SecretStr(""),
             review_job_timeout_seconds=900,
@@ -741,7 +820,12 @@ def main(argv=None):
         )
         prefix = f"/api/projects/{project['id']}"
         invitation = api(leader, "POST", prefix + "/invitations", 201, json={"role": "member"})
-        api(member, "POST", "/api/invitations/accept", json={"token": invitation["token"]})
+        api(
+            member,
+            "POST",
+            "/api/invitations/accept",
+            json={"token": invitation["token"]},
+        )
         module_id = str(uuid4())
         recovery_module_id = str(uuid4())
         plan = {
@@ -861,12 +945,19 @@ def main(argv=None):
             if arguments.mode == "mock"
             else RestrictedLiveTransport()
         )
+        debug_store = LocalReviewDebugStore(
+            ROOT / ".verification/M3-16-review-debug"
+            if arguments.mode == "live"
+            else storage_dir / "review-debug"
+        )
+        debug_store.purge_expired()
         model = BoundedClient(
             sessions,
             configuration=configuration,
             secrets={"DEEPSEEK_API_KEY": SecretStr(key)},
             live_enabled=arguments.mode == "live",
             transport=transport,
+            debug_store=debug_store,
             quota_limits=QuotaLimits(
                 project_daily_reviews=3,
                 platform_daily_reviews=3,
@@ -958,7 +1049,8 @@ def main(argv=None):
                 },
             )
             require(
-                item["sha256"] == hashlib.sha256(data).hexdigest(), "submitted_bytes_hash_mismatch"
+                item["sha256"] == hashlib.sha256(data).hexdigest(),
+                "submitted_bytes_hash_mismatch",
             )
             return item
 
@@ -991,7 +1083,11 @@ def main(argv=None):
             signal.setitimer(signal.ITIMER_REAL, 900)
             try:
                 pointer = execute_pipeline(
-                    sessions, review, storage=storage, client=model, database_client=database
+                    sessions,
+                    review,
+                    storage=storage,
+                    client=model,
+                    database_client=database,
                 )
             finally:
                 signal.setitimer(signal.ITIMER_REAL, 0)
@@ -1011,144 +1107,274 @@ def main(argv=None):
             require(status["stopped"] is None, status["stopped"] or "budget_stopped")
             return result, current(item)
 
-        first = submit(bad, "problematic.docx", handoff_note=BAD_HANDOFF)
-        first_report, first_state = execute(first, "first")
-        require(
-            first_report.get("coverage") == "completed"
-            and first_state["review_status"] == "returned",
-            "first_review_not_completed_and_returned",
-        )
-        findings = first_report["opinions"]
-        seen = {
-            "font": any(
-                row["opinion"].get("reviewer") == "format_checker"
-                and row["opinion"]["severity"] == "blocking"
-                for row in findings
-            ),
-            "fabricated_reference": any(
-                row["opinion"].get("reviewer") == "citation_database"
-                and row["opinion"]["severity"] == "blocking"
-                for row in findings
-            ),
-            "term_conflict": any(
-                row["opinion"]["category"] == "linkage"
-                and TERM
-                in (row["opinion"]["problem"] + (row["opinion"]["basis"].get("excerpt") or ""))
-                for row in findings
-            ),
-            "unsupported_argument": any(row["opinion"]["category"] == "logic" for row in findings),
-        }
-        require(all(seen.values()), "first_review_did_not_identify_all_four_expected_problems")
-        step(
-            "first_real_pipeline_identifies_four_problems_and_returns",
-            checks=seen,
-            opinions=len(findings),
-        )
-        rejected_ids = []
-        for finding in findings:
-            rejected = finding["opinion"]["category"] == "logic"
-            annotation = api(
-                member,
-                "POST",
-                prefix
-                + f"/deliveries/{first['id']}/review/findings/{finding['finding_id']}/annotation",
-                json={
-                    "handling": "not_adopted" if rejected else "adopted",
-                    "reason": REJECTION_REASON if rejected else "已在修订版修改。",
-                    "expected_revision": finding["annotation_revision"],
-                },
+        if arguments.layer == "reviewers":
+            from app.services.citation_review import review_delivery_citations
+            from app.services.reasoning_review import review_delivery_reasoning
+            from app.services.spec_review import review_delivery_spec
+
+            first = submit(bad, "reviewer-problematic.docx", handoff_note=BAD_HANDOFF)
+            with sessions() as db:
+                job = db.scalar(select(ReviewJob).where(ReviewJob.delivery_id == UUID(first["id"])))
+                job_id = job.id
+            common = dict(
+                project_id=UUID(project["id"]),
+                delivery_id=UUID(first["id"]),
+                job_id=job_id,
+                storage=storage,
+                client=model,
+                history=[],
+            )
+            unit_results = {}
+            for reviewer in REVIEWERS:
+                unit_target = reviewer
+                trials = []
+                successes = 0
+                while unit_counts[reviewer] < 3 and successes < 2:
+                    before = unit_counts[reviewer]
+                    if reviewer == "spec_compliance":
+                        result = review_delivery_spec(sessions, **common)
+                        own = result["review"]
+                        hit = bool(
+                            own
+                            and any(
+                                row["severity"] in {"important", "blocking"}
+                                and row["basis"].get("spec_number") == "W1"
+                                and row["location"].get("paragraph") == 3
+                                and row["basis"].get("excerpt_verified") is True
+                                for row in own["findings"]
+                            )
+                        )
+                    elif reviewer in {"citation_extract", "citation_alignment"}:
+                        result = review_delivery_citations(
+                            sessions, **common, database_client=database
+                        )
+                        own = result[
+                            "extraction" if reviewer == "citation_extract" else "alignment"
+                        ]
+                        if reviewer == "citation_extract":
+                            hit = any(
+                                row["title"] == fixture_title
+                                and row["verification"]["status"] == "not_found"
+                                for row in result["references"]
+                            )
+                        else:
+                            hit = citation_alignment_preseed_hit(result)
+                    else:
+                        result = review_delivery_reasoning(sessions, **common)
+                        own = result[reviewer]
+                        hit = bool(
+                            own
+                            and any(
+                                link["check_key"]
+                                == ("support" if reviewer == "logic" else "term:0")
+                                and own["findings"][link["finding_index"]]["severity"]
+                                == "important"
+                                and own["findings"][link["finding_index"]]["location"].get(
+                                    "paragraph"
+                                )
+                                == (3 if reviewer == "logic" else 2)
+                                and own["findings"][link["finding_index"]]["basis"].get(
+                                    "excerpt_verified"
+                                )
+                                is True
+                                for link in result["finding_links"][reviewer]
+                            )
+                        )
+                    require(unit_counts[reviewer] > before, "unit_reviewer_did_not_call")
+                    valid = bool(
+                        own
+                        and own["status"] == "completed"
+                        and not any(
+                            "条意见因格式无效未采用" in note
+                            for note in own["coverage"]["uncovered"]
+                        )
+                    )
+                    successes += valid and hit
+                    trials.append(
+                        {
+                            "trial": len(trials) + 1,
+                            "model_calls": unit_counts[reviewer] - before,
+                            "structurally_valid": valid,
+                            "preseed_hit": bool(hit),
+                            "success": bool(valid and hit),
+                        }
+                    )
+                    evidence(output / f"unit-{reviewer}-{len(trials)}.json", result)
+                    require(status["stopped"] is None, status["stopped"] or "budget_stopped")
+                unit_results[reviewer] = {
+                    "passed": successes >= 2,
+                    "successes": successes,
+                    "model_calls": unit_counts[reviewer],
+                    "trials": trials,
+                }
+                evidence(output / "reviewer-results.json", unit_results)
+                step("reviewer_" + reviewer + "_measured", **unit_results[reviewer])
+            unit_target = None
+            report["reviewer_results"] = unit_results
+        else:
+            first = submit(bad, "problematic.docx", handoff_note=BAD_HANDOFF)
+            first_report, first_state = execute(first, "first")
+            require(
+                first_report.get("coverage") == "completed"
+                and first_state["review_status"] == "returned",
+                "first_review_not_completed_and_returned",
+            )
+            findings = first_report["opinions"]
+            seen = {
+                "font": any(
+                    row["opinion"].get("reviewer") == "format_checker"
+                    and row["opinion"]["severity"] == "blocking"
+                    for row in findings
+                ),
+                "fabricated_reference": any(
+                    row["opinion"].get("reviewer") == "citation_database"
+                    and row["opinion"]["severity"] == "blocking"
+                    for row in findings
+                ),
+                "term_conflict": any(
+                    row["opinion"]["category"] == "linkage"
+                    and TERM
+                    in (row["opinion"]["problem"] + (row["opinion"]["basis"].get("excerpt") or ""))
+                    for row in findings
+                ),
+                "unsupported_argument": any(
+                    row["opinion"]["category"] == "logic" for row in findings
+                ),
+            }
+            require(
+                all(seen.values()),
+                "first_review_did_not_identify_all_four_expected_problems",
+            )
+            step(
+                "first_real_pipeline_identifies_four_problems_and_returns",
+                checks=seen,
+                opinions=len(findings),
+            )
+            rejected_ids = []
+            for finding in findings:
+                rejected = finding["opinion"]["category"] == "logic"
+                annotation = api(
+                    member,
+                    "POST",
+                    prefix
+                    + f"/deliveries/{first['id']}/review/findings/"
+                    + f"{finding['finding_id']}/annotation",
+                    json={
+                        "handling": "not_adopted" if rejected else "adopted",
+                        "reason": REJECTION_REASON if rejected else "已在修订版修改。",
+                        "expected_revision": finding["annotation_revision"],
+                    },
+                )
+                require(
+                    annotation["handling"] == ("not_adopted" if rejected else "adopted"),
+                    "annotation_not_saved",
+                )
+                if rejected:
+                    rejected_ids.append(finding["finding_id"])
+            require(
+                rejected_ids and len(findings) - len(rejected_ids) >= 2,
+                "insufficient_adopted_and_rejected_annotations",
+            )
+            step(
+                "human_adopts_repairs_and_rejects_logic_with_reason",
+                not_adopted_ids=rejected_ids,
+            )
+            second = submit(revised, "revised.docx")
+            second_report, second_state = execute(second, "revised")
+            require(
+                second_report.get("coverage") == "completed"
+                and second_state["review_status"] == "pending_final_review",
+                "revised_delivery_did_not_reach_final_review",
             )
             require(
-                annotation["handling"] == ("not_adopted" if rejected else "adopted"),
-                "annotation_not_saved",
+                not second_report.get("nonconverged"),
+                "cannot_accept_loop_bypass_as_clean_review",
             )
-            if rejected:
-                rejected_ids.append(finding["finding_id"])
-        require(
-            rejected_ids and len(findings) - len(rejected_ids) >= 2,
-            "insufficient_adopted_and_rejected_annotations",
-        )
-        step("human_adopts_repairs_and_rejects_logic_with_reason", not_adopted_ids=rejected_ids)
-        second = submit(revised, "revised.docx")
-        second_report, second_state = execute(second, "revised")
-        require(
-            second_report.get("coverage") == "completed"
-            and second_state["review_status"] == "pending_final_review",
-            "revised_delivery_did_not_reach_final_review",
-        )
-        require(not second_report.get("nonconverged"), "cannot_accept_loop_bypass_as_clean_review")
-        final = api(leader, "GET", prefix + f"/deliveries/{second['id']}/review/final")
-        retained = [row for row in final["not_adopted"] if row["reason"] == REJECTION_REASON]
-        require(retained and final["can_decide"], "rejected_history_missing_from_final_review")
-        step(
-            "revision_preserves_rejection_without_blocking_final_review",
-            duplicate_links=sum(
-                row["duplicate_of"] is not None for row in second_report["opinions"]
-            ),
-            retained_rejections=len(retained),
-        )
-        decision = api(
-            leader,
-            "POST",
-            prefix + f"/deliveries/{second['id']}/review/final",
-            json={
-                "decision": "approve",
-                "comment": "已核对合成验收交付及全部不采纳理由，采用本版本。",
-                "expected_revision": final["workflow_revision"],
-                "context_hash": final["context_hash"],
-                "spec_rulings": [
-                    {
-                        "finding_id": row["finding_id"],
-                        "decision": "accept",
-                        "comment": "负责人核对后接受例外理由。",
-                    }
-                    for row in final["specification_exceptions"]
-                ],
-            },
-        )
-        evidence(output / "final-decision.json", decision)
-        require(current(second)["review_status"] == "adopted", "final_human_approval_not_adopted")
-        step("leader_final_review_adopts_revised_delivery")
+            final = api(leader, "GET", prefix + f"/deliveries/{second['id']}/review/final")
+            retained = [row for row in final["not_adopted"] if row["reason"] == REJECTION_REASON]
+            require(
+                retained and final["can_decide"],
+                "rejected_history_missing_from_final_review",
+            )
+            step(
+                "revision_preserves_rejection_without_blocking_final_review",
+                duplicate_links=sum(
+                    row["duplicate_of"] is not None for row in second_report["opinions"]
+                ),
+                retained_rejections=len(retained),
+            )
+            decision = api(
+                leader,
+                "POST",
+                prefix + f"/deliveries/{second['id']}/review/final",
+                json={
+                    "decision": "approve",
+                    "comment": "已核对合成验收交付及全部不采纳理由，采用本版本。",
+                    "expected_revision": final["workflow_revision"],
+                    "context_hash": final["context_hash"],
+                    "spec_rulings": [
+                        {
+                            "finding_id": row["finding_id"],
+                            "decision": "accept",
+                            "comment": "负责人核对后接受例外理由。",
+                        }
+                        for row in final["specification_exceptions"]
+                    ],
+                },
+            )
+            evidence(output / "final-decision.json", decision)
+            require(
+                current(second)["review_status"] == "adopted",
+                "final_human_approval_not_adopted",
+            )
+            step("leader_final_review_adopts_revised_delivery")
 
-        interrupted = submit(
-            recovery, "connection-recovery.docx", target_module_id=recovery_module_id
-        )
-        status["disconnected"] = True
-        failed_report, failed_state = execute(interrupted, "disconnected")
-        require(
-            failed_report.get("coverage") == "incomplete"
-            and failed_state["review_status"] == "ai_review_partial_failure",
-            "disconnected_model_false_approval",
-        )
-        require(
-            failed_state["review_progress"]["status"] == "failed", "disconnected_job_not_failed"
-        )
-        step("local_transport_disconnect_never_approves", model_network_requests=0)
-        status["disconnected"] = False
-        with sessions() as db:
-            revision = db.get(DeliveryWorkflow, UUID(interrupted["id"])).revision
-        queued = api(
-            member,
-            "POST",
-            prefix + f"/deliveries/{interrupted['id']}/review/retry",
-            json={"expected_revision": revision},
-        )
-        require(queued["status"] == "retry_wait", "public_retry_did_not_queue")
-        recovered_report, recovered_state = execute(interrupted, "recovered")
-        require(
-            recovered_report.get("coverage") == "completed"
-            and recovered_state["review_status"] == "pending_final_review",
-            "recovery_did_not_complete",
-        )
-        step(
-            "public_human_retry_restores_completed_review",
-            preserved_attempt=queued["attempt"],
-            recovered_attempt=recovered_state["review_progress"]["attempt"],
-        )
+            interrupted = submit(
+                recovery,
+                "connection-recovery.docx",
+                target_module_id=recovery_module_id,
+            )
+            status["disconnected"] = True
+            failed_report, failed_state = execute(interrupted, "disconnected")
+            require(
+                failed_report.get("coverage") == "incomplete"
+                and failed_state["review_status"] == "ai_review_partial_failure",
+                "disconnected_model_false_approval",
+            )
+            require(
+                failed_state["review_progress"]["status"] == "failed",
+                "disconnected_job_not_failed",
+            )
+            step("local_transport_disconnect_never_approves", model_network_requests=0)
+            status["disconnected"] = False
+            with sessions() as db:
+                revision = db.get(DeliveryWorkflow, UUID(interrupted["id"])).revision
+            queued = api(
+                member,
+                "POST",
+                prefix + f"/deliveries/{interrupted['id']}/review/retry",
+                json={"expected_revision": revision},
+            )
+            require(queued["status"] == "retry_wait", "public_retry_did_not_queue")
+            recovered_report, recovered_state = execute(interrupted, "recovered")
+            require(
+                recovered_report.get("coverage") == "completed"
+                and recovered_state["review_status"] == "pending_final_review",
+                "recovery_did_not_complete",
+            )
+            step(
+                "public_human_retry_restores_completed_review",
+                preserved_attempt=queued["attempt"],
+                recovered_attempt=recovered_state["review_progress"]["attempt"],
+            )
         measured = ledger()
         with sessions() as db:
             days = list(db.scalars(select(ModelCall.day)))
-        query = {"start": str(min(days)), "end": str(max(days)), "project_id": project["id"]}
+        query = {
+            "start": str(min(days)),
+            "end": str(max(days)),
+            "project_id": project["id"],
+        }
         exported = api(leader, "GET", "/api/admin/usage", params=query)
         require(
             exported["totals"]["calls"] == measured["calls"]
@@ -1188,8 +1414,13 @@ def main(argv=None):
         )
         evidence(output / "admin-usage.json", exported)
         (output / "usage.csv").write_bytes(response.content)
-        step("administrator_summary_csv_and_reviewer_costs_reconcile", rows=len(exported_rows))
-        report["success"] = True
+        step(
+            "administrator_summary_csv_and_reviewer_costs_reconcile",
+            rows=len(exported_rows),
+        )
+        report["success"] = arguments.layer == "e2e" or all(
+            row["passed"] for row in unit_results.values()
+        )
     except (Exception, ReviewDeadline) as error:
         report["failure"] = {
             "type": type(error).__name__,
@@ -1205,12 +1436,18 @@ def main(argv=None):
         print(f"FAIL {report['failure']['type']}: {report['failure']['code']}", flush=True)
     finally:
         try:
+            if debug_store is not None:
+                records = debug_store.list()
+                report["debug_records"] = len(records)
+            if money is not None:
+                report["revision_budget"] = money.summary()
             report["usage"] = ledger()
             evidence(output / "usage.json", report["usage"])
             if report["usage"] is not None and not report["usage"]["run_token_budget_respected"]:
                 report["success"] = False
                 report.setdefault(
-                    "failure", {"type": "AcceptanceFailure", "code": "run_token_budget_exceeded"}
+                    "failure",
+                    {"type": "AcceptanceFailure", "code": "run_token_budget_exceeded"},
                 )
             report["model_transport"] = model_events
             report["real_model_network_calls"] = sum(row["real_network"] for row in model_events)

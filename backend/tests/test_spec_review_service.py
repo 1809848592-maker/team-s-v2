@@ -258,24 +258,17 @@ def model_response():
     value = {
         "findings": [
             {
-                "category": "specification",
+                "check_key": "W1",
                 "severity": "important",
-                "location": {
-                    "description": "交付源文本第1行",
-                    "part": "markdown",
-                    "line_start": 1,
-                    "line_end": 1,
-                },
+                "segment_id": "S1",
                 "problem": "测试术语需要与方案核对。",
-                "basis": {"spec_number": "W1", "excerpt": "关键术语与项目方案保持一致。"},
+                "excerpt": PRIVATE,
+                "context_key": "W1",
+                "context_excerpt": "关键术语与项目方案保持一致。",
                 "suggestion": "逐项核对术语。",
             }
         ],
-        "coverage": {"checked": ["W1"], "uncovered": ["来源真实性"]},
-        "checks": [
-            {"spec_number": "W1", "status": "issues", "reason": "测试术语意见对应本次文字。"},
-            {"spec_number": "H1", "status": "uncovered", "reason": "交接说明的事实来源未核验。"},
-        ],
+        "coverage_notes": ["交接说明的事实来源未核验。"],
     }
     return {
         "choices": [

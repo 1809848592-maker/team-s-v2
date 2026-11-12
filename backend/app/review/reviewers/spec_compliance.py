@@ -7,71 +7,11 @@ from uuid import UUID
 from pydantic import ValidationError
 
 from app.review.extract_types import ExtractedDocument
+from app.review.reviewers.contract import adapt_findings, segment_inputs
 from app.review.reviewers.executor import ReviewerExecutor, _safe_json
 from app.review.reviewers.instructions import load_spec_instruction
 from app.review.reviewers.schemas import HistoricalOpinion
-from app.review.reviewers.spec_types import SpecReviewOutput
 from app.schemas.specs import SpecItem
-
-_COORDINATES = (
-    "part",
-    "page",
-    "slide",
-    "paragraph",
-    "table",
-    "row",
-    "column",
-    "shape_id",
-    "line_start",
-    "line_end",
-)
-
-
-def _location_text(finding, document, handoff_note):
-    location = finding.location.model_dump(exclude={"description"})
-    if location["part"] == "handoff_note":
-        if any(location[key] is not None for key in _COORDINATES if key != "part"):
-            raise ValueError
-        return (handoff_note,)
-    if location["part"] is None:
-        raise ValueError
-    matches = tuple(
-        segment.text
-        for segment in document.segments
-        if all(location[key] == getattr(segment.location, key) for key in _COORDINATES)
-    )
-    if not matches:
-        raise ValueError
-    return matches
-
-
-def _validate_output(output, items, document, handoff_note):
-    if not isinstance(output, SpecReviewOutput):
-        raise ValueError
-    expected = {item.number: item for item in items}
-    checks = {check.spec_number: check for check in output.checks}
-    if set(checks) != set(expected) or len(checks) != len(output.checks):
-        raise ValueError
-    counts = dict.fromkeys(expected, 0)
-    for finding in output.findings:
-        number = finding.basis.spec_number
-        if finding.category != "specification" or number not in expected:
-            raise ValueError
-        counts[number] += 1
-        texts = _location_text(finding, document, handoff_note)
-        excerpt = finding.basis.excerpt
-        if excerpt is not None and not any(
-            excerpt in text for text in (*texts, expected[number].requirement)
-        ):
-            raise ValueError
-    for number, check in checks.items():
-        if (check.status == "issues") != bool(counts[number]):
-            raise ValueError
-        if check.status == "checked" and not document.segments and not handoff_note.strip():
-            raise ValueError
-        # 本审核员没有读取模板的视觉内容，不能靠模板关联或文本证明视觉符合。
-        if expected[number].category == "template" and check.status != "uncovered":
-            raise ValueError
 
 
 def review_specification(
@@ -156,29 +96,50 @@ def review_specification(
     context = {
         "plan": plan,
         "specification": {"items": [item.model_dump(mode="json") for item in ai]},
-        "delivery": {**document.to_dict(), "handoff_note": handoff_note},
+        "delivery": {
+            "sha256": document.sha256,
+            "format": document.format,
+            "segments": segment_inputs(document, handoff_note),
+        },
     }
     accepted = {}
 
-    def validate(output):
-        _validate_output(output, ai, document, handoff_note)
-        accepted.update({check.spec_number: check for check in output.checks})
+    def adapt(output):
+        adapted = adapt_findings(
+            output,
+            category="specification",
+            document=document,
+            handoff_note=handoff_note,
+            expected={
+                item.number: {
+                    "available": item.category != "template"
+                    and bool(document.segments or handoff_note.strip()),
+                    "sources": {item.number},
+                }
+                for item in ai
+            },
+            sources={item.number: item.requirement for item in ai},
+            severities=("blocking", "important", "suggestion"),
+            spec_numbers={item.number: item.number for item in ai},
+        )
+        accepted.update({check["key"]: check for check in adapted.checks})
+        return adapted
 
-    result = ReviewerExecutor(client).run(
+    result = ReviewerExecutor(client).run_compact(
         project_id=project_id,
         job_id=job_id,
         reviewer="spec_compliance",
         instruction=load_spec_instruction(),
         context=context,
         history=historical,
-        validate_output=validate,
+        adapt_output=adapt,
     )
     report.update(status=result.status, review=result.to_dict(), error_code=result.error_code)
     if result.status == "completed":
         for check in report["checks"]:
             if check["number"] in accepted:
                 value = accepted[check["number"]]
-                check.update(status=value.status, reason=value.reason)
+                check.update(status=value["status"], reason=value["reason"])
         # 抽取器的实际遗漏由平台保留，模型不能用空uncovered覆盖它。
         if report["extraction_warnings"]:
             coverage = report["review"]["coverage"]["uncovered"]

@@ -1,4 +1,4 @@
-"""逻辑与衔接意见的逐项覆盖及独立上下文证据。"""
+"""上游绑定快照与旧报告结构；14.9新模型响应使用共享compact契约。"""
 
 from typing import Literal
 from uuid import UUID
@@ -48,6 +48,8 @@ class ReasoningFindingLink(ReviewSchema):
 
 
 class ReasoningOutput(ReviewOutput):
+    """保留既有报告的冻结结构，不再用来要求模型输出跨数组引用。"""
+
     findings: tuple[OpinionDraft, ...] = Field(max_length=20)
     checks: tuple[ReasoningCheck, ...] = Field(max_length=601)
     finding_links: tuple[ReasoningFindingLink, ...] = Field(max_length=20)

@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
 
+from pydantic import BaseModel
+
 from app.review.reviewers.schemas import ReviewOutput
 
 MAX_INSTRUCTION_BYTES = 64 * 1024
@@ -108,12 +110,12 @@ class InstructionBundle:
     rubric: str
     positive_examples: tuple[dict, ...]
     negative_examples: tuple[dict, ...]
-    output_model: type[ReviewOutput] = ReviewOutput
+    output_model: type[BaseModel] = ReviewOutput
 
     def __post_init__(self) -> None:
         try:
             if not isinstance(self.output_model, type) or not issubclass(
-                self.output_model, ReviewOutput
+                self.output_model, BaseModel
             ):
                 raise ValueError
             if not isinstance(self.reviewer, str) or not re.fullmatch(
@@ -207,7 +209,7 @@ def load_framework_instruction() -> InstructionBundle:
 
 def load_spec_instruction() -> InstructionBundle:
     """Load the fixed specification resource with the platform's trusted schema."""
-    from app.review.reviewers.spec_types import SpecReviewOutput
+    from app.review.reviewers.contract import CompactReviewOutput
 
     try:
         resource = resources.files("app.review.reviewers").joinpath(
@@ -215,8 +217,8 @@ def load_spec_instruction() -> InstructionBundle:
         )
         with resource.open("rb") as stream:
             data = stream.read(MAX_INSTRUCTION_BYTES + 1)
-        bundle = _parse(data, output_model=SpecReviewOutput)
-        if bundle.reviewer != "spec_compliance" or bundle.version != "2026-11-11.1":
+        bundle = _parse(data, output_model=CompactReviewOutput)
+        if bundle.reviewer != "spec_compliance" or bundle.version != "2026-11-12.3":
             raise ValueError
         return bundle
     except (OSError, ValueError, TypeError, OverflowError, RecursionError):
@@ -225,14 +227,11 @@ def load_spec_instruction() -> InstructionBundle:
 
 def load_citation_instruction(stage: str) -> InstructionBundle:
     """Only platform-selected citation stages can select their packaged schema."""
-    from app.review.reviewers.citation_types import (
-        CitationAlignmentOutput,
-        CitationExtractionOutput,
-    )
+    from app.review.reviewers.contract import CompactReviewOutput
 
     schemas = {
-        "citation_extract": CitationExtractionOutput,
-        "citation_alignment": CitationAlignmentOutput,
+        "citation_extract": CompactReviewOutput,
+        "citation_alignment": CompactReviewOutput,
     }
     try:
         if not isinstance(stage, str) or stage not in schemas:
@@ -241,7 +240,7 @@ def load_citation_instruction(stage: str) -> InstructionBundle:
         with resource.open("rb") as stream:
             data = stream.read(MAX_INSTRUCTION_BYTES + 1)
         bundle = _parse(data, output_model=schemas[stage])
-        if bundle.reviewer != stage or bundle.version != "2026-11-12.1":
+        if bundle.reviewer != stage or bundle.version != "2026-11-12.3":
             raise ValueError
         return bundle
     except (OSError, ValueError, TypeError, OverflowError, RecursionError):
@@ -250,7 +249,7 @@ def load_citation_instruction(stage: str) -> InstructionBundle:
 
 def load_reasoning_instruction(reviewer: str) -> InstructionBundle:
     """固定两个平台审核员，共用有界意见关联结构。"""
-    from app.review.reviewers.reasoning_types import ReasoningOutput
+    from app.review.reviewers.contract import CompactReviewOutput
 
     try:
         if not isinstance(reviewer, str) or reviewer not in {"logic", "linkage"}:
@@ -258,8 +257,8 @@ def load_reasoning_instruction(reviewer: str) -> InstructionBundle:
         resource = resources.files("app.review.reviewers").joinpath("resources", f"{reviewer}.toml")
         with resource.open("rb") as stream:
             data = stream.read(MAX_INSTRUCTION_BYTES + 1)
-        bundle = _parse(data, output_model=ReasoningOutput)
-        if bundle.reviewer != reviewer or bundle.version != "2026-11-12.2":
+        bundle = _parse(data, output_model=CompactReviewOutput)
+        if bundle.reviewer != reviewer or bundle.version != "2026-11-12.3":
             raise ValueError
         return bundle
     except (OSError, ValueError, TypeError, OverflowError, RecursionError):

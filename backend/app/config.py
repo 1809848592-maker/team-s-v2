@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     session_cookie_secure: bool = False
     platform_admin_user_ids: str = ""
     storage_dir: Path = Path(__file__).resolve().parents[2] / ".storage"
+    review_debug_dir: Path | None = None
     upload_max_bytes: int = Field(default=100 * 1024 * 1024, gt=0)
     mcp_allowed_hosts: str = "127.0.0.1:*,localhost:*,[::1]:*"
     mcp_allowed_origins: str = "http://127.0.0.1:*,http://localhost:*,http://[::1]:*"
@@ -40,6 +41,10 @@ class Settings(BaseSettings):
     @property
     def admin_user_ids(self) -> frozenset[str]:
         return frozenset(self.platform_admin_user_ids.split(",")) - {""}
+
+    @property
+    def review_debug_path(self) -> Path:
+        return self.review_debug_dir or self.storage_dir / "review-debug"
 
 
 @lru_cache

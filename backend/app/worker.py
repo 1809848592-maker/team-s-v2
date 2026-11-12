@@ -15,6 +15,7 @@ from threading import Event, Thread
 
 from sqlalchemy.orm import Session
 
+from app.review.debug_records import LocalReviewDebugStore, ReviewDebugError
 from app.review.runner import DeliveryReviewInput, PipelineNotReadyError, run_delivery_review
 from app.services.llm_usage import QuotaExceededError
 from app.services.review_jobs import claim_next, complete_job, fail_job
@@ -237,9 +238,17 @@ def main() -> None:
     signal.signal(signal.SIGTERM, stop)
     signal.signal(signal.SIGINT, stop)
     settings = get_settings()
+    debug_store = LocalReviewDebugStore(settings.review_debug_path)
+    next_debug_cleanup = 0.0
     logger.info("后台审核 worker 已启动")
     try:
         while not stopped.is_set():
+            if time.monotonic() >= next_debug_cleanup:
+                try:
+                    debug_store.purge_expired()
+                except ReviewDebugError:
+                    logger.warning("审核调试记录清理暂时失败，将在下一周期重试")
+                next_debug_cleanup = time.monotonic() + 3600
             try:
                 processed = run_once(
                     SessionLocal,

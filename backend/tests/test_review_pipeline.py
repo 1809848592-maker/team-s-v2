@@ -418,29 +418,8 @@ def test_actual_four_services_and_five_mock_model_calls_reach_final_review_with_
         assert request_data(payload, "historical_handling") == []
         assert request_data(payload, "delivery")["sha256"] == delivery["sha256"]
         requests[reviewer] = (call_id, payload)
-        coverage = {"checked": ["固定替身只核对所给可读文字"], "uncovered": ["原始数据与外部全文"]}
-        if reviewer == "spec_compliance":
-            output = {
-                "findings": [],
-                "coverage": coverage,
-                "checks": [
-                    {
-                        "spec_number": item["number"],
-                        "status": "checked",
-                        "reason": "固定替身已核对本条与可读正文。",
-                    }
-                    for item in request_data(payload, "bound_specification")["items"]
-                ],
-            }
-        elif reviewer == "citation_extract":
-            output = {
-                "findings": [],
-                "coverage": coverage,
-                "references": [],
-                "bibliography_status": "absent",
-            }
-        elif reviewer == "citation_alignment":
-            output = {"findings": [], "coverage": coverage, "checks": [], "issue_links": []}
+        if reviewer in {"spec_compliance", "citation_extract", "citation_alignment"}:
+            output = {"findings": [], "coverage_notes": ["原始数据与外部全文"]}
         else:
             output = output_for(payload, reviewer, finding=False)
         return httpx2.Response(200, json=model_response(output))

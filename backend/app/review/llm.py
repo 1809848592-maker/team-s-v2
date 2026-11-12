@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections import OrderedDict
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
@@ -20,6 +21,7 @@ if TYPE_CHECKING:
     from app.services.llm_usage import QuotaLimits
 
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+MAX_REVIEW_CAPTURES = 8
 
 
 class LLMDisabledError(RuntimeError):
@@ -116,6 +118,7 @@ class LLMClient:
         live_enabled: bool = False,
         transport: httpx2.BaseTransport | None = None,
         quota_limits: "QuotaLimits | None" = None,
+        debug_store=None,
     ) -> None:
         self._sessions = sessions
         self.configuration = configuration if configuration is not None else load_model_config()
@@ -123,6 +126,52 @@ class LLMClient:
         self._live_enabled = live_enabled
         self._transport = transport
         self._quota_limits = quota_limits
+        self._debug_store = debug_store
+        self._review_captures = OrderedDict()
+
+    def release_review_capture(self, call_id):
+        self._review_captures.pop(call_id, None)
+
+    def record_review_debug(
+        self,
+        *,
+        call_id,
+        project_id,
+        job_id,
+        reviewer,
+        instruction_version,
+        errors,
+        raw_output=None,
+    ):
+        if self._debug_store is None:
+            self.release_review_capture(call_id)
+            return
+        raw = self._review_captures.pop(call_id, "") if raw_output is None else raw_output
+        self.release_review_capture(call_id)
+        secrets = [
+            value.get_secret_value() if isinstance(value, SecretStr) else value
+            for value in self._secrets.values()
+        ]
+        try:
+            self._debug_store.write(
+                call_id=call_id,
+                project_id=project_id,
+                job_id=job_id,
+                reviewer=reviewer,
+                instruction_version=instruction_version,
+                raw_output=raw,
+                errors=errors,
+                secrets=secrets,
+            )
+        except Exception:
+            raise LLMRequestError("debug_record_failed") from None
+
+    def _capture_review(self, call_id, value):
+        if self._debug_store is not None:
+            self._review_captures[call_id] = value
+            self._review_captures.move_to_end(call_id)
+            while len(self._review_captures) > MAX_REVIEW_CAPTURES:
+                self._review_captures.popitem(last=False)
 
     def complete_json(
         self,
@@ -229,7 +278,19 @@ class LLMClient:
                     try:
                         body = _json_object(bytes(content))
                     except (ValueError, UnicodeError, RecursionError):
+                        self._capture_review(
+                            identity, bytes(content).decode("utf-8", errors="replace")
+                        )
                         raise LLMRequestError("response_invalid") from None
+                    # 错误信封也要留下原始现场；有效message会替换为模型content。
+                    self._capture_review(identity, bytes(content).decode("utf-8", errors="replace"))
+                    choices = body.get("choices")
+                    if isinstance(choices, list) and len(choices) == 1:
+                        candidate = choices[0]
+                        message = candidate.get("message") if isinstance(candidate, dict) else None
+                        raw = message.get("content") if isinstance(message, dict) else None
+                        if isinstance(raw, str):
+                            self._capture_review(identity, raw)
                     try:
                         usage = _validated_usage(body.get("usage"))
                     except (KeyError, ValueError, TypeError):
@@ -286,5 +347,22 @@ class LLMClient:
         except Exception:
             raise LLMRequestError("usage_store_error") from None
         if code is not None:
+            if code in {
+                "content_invalid",
+                "content_empty",
+                "output_truncated",
+                "response_invalid",
+                "completion_incomplete",
+            }:
+                self.record_review_debug(
+                    call_id=identity,
+                    project_id=project_id,
+                    job_id=job_id,
+                    reviewer=reviewer,
+                    instruction_version=instruction_version,
+                    errors=[{"code": code}],
+                )
+            else:
+                self.release_review_capture(identity)
             raise LLMRequestError(code) from None
         return result

@@ -4,10 +4,10 @@ from typing import Literal
 
 from pydantic import Field
 
+from app.review.reviewers.contract import CompactReviewOutput
 from app.review.reviewers.schemas import (
     Label,
     OpinionLocation,
-    ReviewOutput,
     ReviewSchema,
     ShortText,
     Text,
@@ -21,6 +21,7 @@ class CitationExcerpt(ReviewSchema):
 
 class ExtractedReference(ReviewSchema):
     reference_id: Label
+    excerpt_verified: bool = True
     evidence: tuple[CitationExcerpt, ...] = Field(min_length=1, max_length=20)
     title: ShortText | None = None
     authors: tuple[ShortText, ...] = Field(default=(), max_length=20)
@@ -28,9 +29,8 @@ class ExtractedReference(ReviewSchema):
     doi: ShortText | None = None
 
 
-class CitationExtractionOutput(ReviewOutput):
-    references: tuple[ExtractedReference, ...] = Field(max_length=100)
-    bibliography_status: Literal["complete", "partial", "absent", "unreadable"]
+class CitationExtractionOutput(CompactReviewOutput):
+    """只标出引用条目，元数据由程序保守解析。"""
 
 
 class CitationCorrespondence(ReviewSchema):
@@ -46,6 +46,5 @@ class CitationIssueLink(ReviewSchema):
     reference_id: Label | None = None
 
 
-class CitationAlignmentOutput(ReviewOutput):
-    checks: tuple[CitationCorrespondence, ...] = Field(max_length=100)
-    issue_links: tuple[CitationIssueLink, ...] = Field(max_length=100)
+class CitationAlignmentOutput(CompactReviewOutput):
+    """引用对应的精简模型意见。"""

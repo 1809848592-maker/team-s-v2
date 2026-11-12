@@ -304,19 +304,17 @@ def location(line):
 
 def extraction_output():
     return {
-        "findings": [],
-        "coverage": {"checked": ["参考文献表"], "uncovered": []},
-        "references": [
+        "findings": [
             {
-                "reference_id": "R1",
-                "evidence": [{"location": location(2), "excerpt": REFERENCE}],
-                "title": "A Fixed Evidence Study",
-                "authors": ["Smith"],
-                "year": 2020,
-                "doi": "10.1234/fixed-test",
+                "check_key": "reference",
+                "severity": "suggestion",
+                "segment_id": "S2",
+                "problem": "识别到参考文献条目。",
+                "excerpt": REFERENCE,
+                "suggestion": "由平台提取并核验元数据。",
             }
         ],
-        "bibliography_status": "complete",
+        "coverage_notes": [],
     }
 
 
@@ -324,24 +322,17 @@ def alignment_output():
     return {
         "findings": [
             {
-                "category": "citation",
+                "check_key": "support_insufficient",
                 "severity": "important",
-                "location": location(1),
+                "segment_id": "S1",
                 "problem": "当前证据尚不能说明正文论断获得支撑。",
-                "basis": {"excerpt": BODY},
+                "excerpt": BODY,
                 "suggestion": "核对原文对该论断的支撑。",
+                "context_key": "R1",
+                "context_excerpt": REFERENCE,
             }
         ],
-        "coverage": {"checked": ["正文[1]与文献R1对应"], "uncovered": ["论文全文支撑"]},
-        "checks": [
-            {
-                "reference_id": "R1",
-                "status": "matched",
-                "reason": "正文[1]与参考文献表R1对应。",
-                "citations": [{"location": location(1), "excerpt": BODY}],
-            }
-        ],
-        "issue_links": [{"finding_index": 0, "kind": "support_insufficient", "reference_id": "R1"}],
+        "coverage_notes": ["论文全文支撑"],
     }
 
 

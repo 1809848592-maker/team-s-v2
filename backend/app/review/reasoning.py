@@ -5,31 +5,13 @@ import re
 from dataclasses import asdict
 from uuid import UUID
 
-from app.review.extract_types import ExtractedDocument, TextLocation
+from app.review.extract_types import ExtractedDocument
+from app.review.reviewers.contract import adapt_findings, segment_inputs
 from app.review.reviewers.executor import ReviewerExecutor, _safe_json
 from app.review.reviewers.instructions import load_reasoning_instruction
-from app.review.reviewers.reasoning_types import ReasoningOutput, UpstreamSnapshot
+from app.review.reviewers.reasoning_types import UpstreamSnapshot
 from app.review.reviewers.schemas import HistoricalOpinion
 from app.schemas.plans import PlanContent
-
-_COORDINATES = tuple(TextLocation.__dataclass_fields__)
-
-
-def _current_text(location, document, handoff_note):
-    if location.part == "handoff_note":
-        if any(getattr(location, key) is not None for key in _COORDINATES if key != "part"):
-            raise ValueError
-        return (handoff_note,)
-    if location.part is None:
-        raise ValueError
-    texts = tuple(
-        segment.text
-        for segment in document.segments
-        if all(getattr(location, key) == getattr(segment.location, key) for key in _COORDINATES)
-    )
-    if not texts:
-        raise ValueError
-    return texts
 
 
 def _check_plan(plan, module, upstream):
@@ -84,51 +66,6 @@ def _check_plan(plan, module, upstream):
         "logic": (logic_sources, logic_checks),
         "linkage": (linkage_sources, linkage_checks),
     }
-
-
-def _validate_output(output, reviewer, expected, sources, document, handoff_note):
-    if not isinstance(output, ReasoningOutput):
-        raise ValueError
-    checks = {check.key: check for check in output.checks}
-    if set(checks) != set(expected) or len(checks) != len(output.checks):
-        raise ValueError
-    links = {link.finding_index: link for link in output.finding_links}
-    if set(links) != set(range(len(output.findings))) or len(links) != len(output.finding_links):
-        raise ValueError
-    counts = dict.fromkeys(expected, 0)
-    for index, finding in enumerate(output.findings):
-        if (
-            finding.category != reviewer
-            or finding.severity not in {"important", "suggestion"}
-            or finding.basis.spec_number is not None
-            or finding.basis.excerpt is None
-            or not any(
-                finding.basis.excerpt in text
-                for text in _current_text(finding.location, document, handoff_note)
-            )
-        ):
-            raise ValueError
-        link = links[index]
-        if link.check_key not in expected:
-            raise ValueError
-        counts[link.check_key] += 1
-        allowed = expected[link.check_key]["sources"]
-        if allowed and link.check_key != "support" and not link.context_refs:
-            raise ValueError
-        seen = set()
-        for reference in link.context_refs:
-            if (
-                reference.key not in allowed
-                or reference.key in seen
-                or reference.excerpt not in sources.get(reference.key, "")
-            ):
-                raise ValueError
-            seen.add(reference.key)
-    for key, check in checks.items():
-        if (check.status == "issues") != bool(counts[key]):
-            raise ValueError
-        if not expected[key]["available"] and check.status != "uncovered":
-            raise ValueError
 
 
 def _inputs(
@@ -286,7 +223,12 @@ def review_reasoning(
                 ],
             },
             "specification": specification,
-            "delivery": {**document.to_dict(), "handoff_note": handoff_note},
+            "delivery": {
+                "format": document.format,
+                "sha256": document.sha256,
+                "segments": segment_inputs(document, handoff_note),
+                "warnings": [asdict(warning) for warning in document.warnings],
+            },
         }
         if reviewer == "linkage":
             context["delivery"]["upstream_snapshots"] = [
@@ -294,25 +236,34 @@ def review_reasoning(
             ]
         accepted = []
 
-        def validate(output):
-            _validate_output(output, reviewer, expected, sources, document, handoff_note)
-            accepted[:] = [output]
+        def adapt(output):
+            adapted = adapt_findings(
+                output,
+                category=reviewer,
+                document=document,
+                handoff_note=handoff_note,
+                expected=expected,
+                sources=sources,
+                max_findings=20,
+            )
+            accepted[:] = [adapted]
+            return adapted
 
-        result = executor.run(
+        result = executor.run_compact(
             project_id=project_id,
             job_id=job_id,
             reviewer=reviewer,
             instruction=load_reasoning_instruction(reviewer),
             context=context,
             history=historical,
-            validate_output=validate,
+            adapt_output=adapt,
         )
         report[reviewer] = result.to_dict()
         if result.status == "completed":
             successful[reviewer] = accepted[0]
             for check in accepted[0].checks:
-                if check.status == "uncovered":
-                    notices.append(f"{reviewer}/{check.key}：{check.reason}")
+                if check["status"] == "uncovered":
+                    notices.append(f"{reviewer}/{check['key']}：{check['reason']}")
         if result.coverage:
             for kind in ("checked", "uncovered"):
                 report["coverage"][kind].extend(getattr(result.coverage, kind))
@@ -328,8 +279,6 @@ def review_reasoning(
         return report
     report["status"] = "completed"
     for reviewer, output in successful.items():
-        report["checks"][reviewer] = [check.model_dump(mode="json") for check in output.checks]
-        report["finding_links"][reviewer] = [
-            link.model_dump(mode="json") for link in output.finding_links
-        ]
+        report["checks"][reviewer] = list(output.checks)
+        report["finding_links"][reviewer] = list(output.finding_links)
     return report
