@@ -19,7 +19,7 @@
 - **M1 已由发起人于 2026-11-10 验收通过，方案制定者独立复核确认：10组验收及78项后端测试通过。**
 - 按发起人最新授权，开始M2，顺序完成M2-01至M2-07，每项独立测试/提交，最终验收后停下。
 - M2-01至M2-07均已实现、测试并独立提交；发起人于2026-11-11验收通过，方案制定者独立复核12组验收、129项后端测试及外部越权探测401。
-- M3-01至M3-13及M3-15均已实现、通过各项验证并逐项提交；下一项为M3-14“审核报告页面”。按AGENTS.md每次完成一个任务，M3全阶段结束后实际运行验收脚本并停下等待验收。
+- M3-01至M3-13及M3-15均已实现、通过各项验证并逐项提交；M3-14“审核报告页面”实现与替身验证已完成，最终后端1778项和浏览器7组通过。真实M3验收4轮均未通过，最后一轮因衔接审核输出达8192被截断；付费输出上限调整见Q-M3-14-02，等待发起人确认。不开始M4。
 
 ## M1-01：工程骨架（2026-11-10）
 
@@ -486,3 +486,26 @@ colima stop teams-m1
 - 共享VM资源限制仍未消除：约2.83GiB内存，串行镜像构建期间测试PG于04:03:57.049及04:04:02.744 UTC两次checkpointer被SIGKILL，内核本轮新增global_oom确认其cgroup；分别于04:04:01.331、04:04:02.778恢复连接，04:04:14最终`pg_isready`及真实`SELECT 1`均通过。没有停止其他环境、重启测试PG或调整VM；故障发生于完整回归及浏览器结束之后，不改变已通过结果，但不能宣称串行构建根治OOM。证据保留在`M3-15-resource-failure.md`及构建前后快照。
 - 验证证据均在忽略目录`.verification/`：`M3-15-generation.log`、`M3-15-drafting-integration.log`、`M3-15-drafting-integration-final.log`、`M3-15-drafting-mixed-quota.log`、`M3-15-baseline.log`、`M3-15-pytest.log`、`M3-15-frontend-build.log`、`M3-15-browser-initial.log`、`M3-15-browser.log`、`M3-15-browser-summary.json`、截图、`M3-15-browser-cleanup.json`、`M3-15-schema-cleanup.json`、`M3-15-wheel.log`、`M3-15-wheel-verification.json`、`M3-15-build-final.log`、`M3-15-up-final.log`、`M3-15-container-summary.json/.md`、`M3-15-schema-metadata.json`及`M3-15-source-comparison.json`。
 - 本轮仅完成M3-15，独立提交后停下；下一项M3-14。全部改动只在platform内，无新增待裁定问题。Compose显式`--env-file /dev/null`，web/worker真实调用开关false、Key为空；本项真实模型调用0，没有读取、显示或提交`platform/.env`。M3最终真实DeepSeek验收尚未执行，仍留到M3-14完成后运行并等待发起人验收。
+
+
+## M3-14：审核报告页面与M3最终验收（2026-11-12）
+
+- 新增正式交付的审核报告入口，懒加载逐条意见、程序/AI/数据库来源、模型及指令版本、位置信息、依据、修改建议和完整覆盖边界。真实解析程序规范、文献reference_id和逻辑/衔接分组检查；中文文献未能核验不作为不存在。保留历史版本入口和500条历史截断提示；终审独立读取完整依据，不依赖页面历史截断。
+- 提交人及当前模块共同负责人可逐条采纳/不采纳，后者必填理由；显示实际标注人和时间，标注本身不改变交付状态。终审醒目列出规范不适用/不采纳项，逐条裁定，驳回须意见且等同退回；其他历史不采纳项、AI未收敛、自审及冻结决定均展示。服务端能力控制实际操作，普通成员只读，平台管理员身份不扩大项目权限。
+- 新增人类公开审核重试POST与expected_revision严格校验。权限缺口已按AGENTS记录Q-M3-14-01，并由发起人明确决定“提交人及当前模块负责人”；单纯项目负责人/其他成员/管理员/智能体不能重试。项目→workflow→job锁序，锁前后重查成员与最新方案负责人，只对partial_failure+failed且修订匹配排队；保留同job累计attempt、增加有限重试次数，排队不外发也不预扣预算。实际人类重试事件及内部任务事件同事务，失败整体回滚；HTTP含本人Cookie的智能体及真实MCP越权均拒绝审计。
+- 标注/终审发生409时保留本人输入，刷新最新依据后必须明确核对才可重交；修复Vue监听数组getter使父级刷新误清空脏输入的问题。账号/项目/交付切换及卸载取消旧请求并隔离迟到结果；报告读取重试和业务重试独立。后台成功不再显示旧“等待汇总”误导文案，时间线新增中文汇总/标注/重试/终审事件。
+- 最终验收发现模型抽取把独立中文“参考文献”章节标题带入纯英文条目，造成语言启发式误分类。最小修复仅在语言判定时排除3个精确独立标题，完整raw/evidence原样保留；提取title/authors中的汉字、中文刊物、近似标题及未知title仍保守保护。程序规则升为citation-database/2并保留历史冻结来源。11项新回归先以原实现确认4项失败/7项保护通过，再修复；文献专项244 passed in7.46s。第二轮真实逻辑审核曾在60秒超时，正式logic/linkage请求时限调整120秒，模型、思考、8192输出上限和价格不变；普通审核员/起草仍60秒，worker整体硬期限仍独立生效，部署说明同步。
+- 新增M3验收驱动scripts/accept_m3.py与部署说明：默认完整MockTransport、显式live+本项目绝对Key文件才读取字面DEEPSEEK_API_KEY；不source或输出.env，不隐式载入其他设置。真实HTTP会话、随机PG schema/本地临时存储、正式提交、真实claim/execute_pipeline/complete_job、人类标注及终审、公开重试和管理员CSV对账；官方模型POST白名单、免费两库GET白名单、禁重定向/环境代理，Key不会进入文献端。唯一英文虚构标题先由两库免费预检，失败零模型调用；问题稿仅首段错字体，仍必须识别四类问题。旧不采纳带入终审且不能以循环上限绕过；故意断网在真实连接前拒绝，再恢复公开重试。
+- 驱动上限29账本调用、默认300000保守token，既有UTC日桶外再加跨UTC日期整轮累计门禁，每次结构修复重新按实际消息预留；未知/待结算占用保留。900秒租约及SIGALRM总期限，超时参数只覆盖HTTP等待，不扩大模型/输出/费用或调用边界。9项跨日预算边界、调用数1、token10000、mock拒绝Key文件、预检失败零模型及超时参数/字体XML检查均通过。最终指定剩余额度的mock8组通过：19账本、3000已知token、估算¥0.0245664000，4次故意断网未知预留128129，保守合计131129≤206742；无真实模型/文献请求，清理全部成功。
+- 报告元数据新增13项、公开重试30项及文献语言11项，共54项新增测试。报告相关组合回归187 passed in76.08s，公开重试最终30 passed in13.12s；首次完整回归1767 passed in275.72s。测试初期两项失败为测试helper误把项目字典当Response和running任务缺lease违反约束，修正后加强锁等待撤员/改派与代理审计用例，未放宽产品保护。
+- 最终页面Playwright真实HTTP/独立PG schema/当前生产dist通过7组：四类来源/覆盖/逐条检查、必填理由和409输入保留、普通成员只读、共同负责人重试轮询且项目leader无旁路、历史规范例外与终审context_hash冲突保留、驳回/采用冻结、自审和时间线。控制台异常0，截图已检查，服务/worker正常关闭，schema独立复查不存在。首次浏览器实测发现输入被父刷新清空并修复；随后一次验证失败为历史summary选择器匹配嵌套来源summary，收窄直接子元素后7组全通过。helper初始shell退出留下本轮Python进程，已仅终止确认所属PID并完成fixture清理，最终命令使用exec确保生命周期正确。
+- Vue类型检查/Vite1656模块生产构建、Ruff及214文件格式、离线依赖锁检查通过。扩大Ruff到旧M2验收脚本曾发现9处既有E501长行；未修改旧脚本，最终后端及本次新增验收驱动全部通过。修复后wheel离线构建138项（130Python+8TOML）逐字节一致，无遗漏或差异，包含retry和citation-database/2及120秒配置。
+- 文献语言与超时配置修复后，最终完整后端 **1778 passed in274.30s，无跳过、无警告**；代码冻结后隔离M3 Compose（18002）只构建共享web/worker镜像一次，up-wait成功，0020_spec_drafting(head)、Alembic无漂移、health ok，postgres/web healthy、worker运行。168项运行源码/迁移/资源/锁/静态文件SHA-256全部匹配；四个审核路由及四个前端DOM标记齐全，web/worker同镜像，容器.env不存在、Key为空、live=false。
+- 本机约2.83GiB共享Docker VM的OOM问题仍存在：本轮构建05:59:40至05:59:57 UTC期间，测试PG checkpointer在05:59:50被SIGKILL，05:59:53自动恢复，内核新增3行OOM证据；构建后pg_isready与SELECT1成功，保留State.OOMKilled标记。完整pytest/浏览器/此前验收均在构建前结束，未停止其他环境、未调整VM，不能写成串行构建根治OOM。
+- 真实验收前三次均未通过，未改写审核结论：第一轮5调用/37185已知token/估算¥0.4298070000，宽泛虚构标题查询超出候选范围且中文章节标题造成保守语言误分类，英文条目标未能核验，未满足文献阻断验收；第二轮5调用/23594已知token/估算¥0.1697030000，logic60秒超时，另1条未知用量继续预留32479，交付停在partial_failure；第三轮10调用/89132token/估算¥0.9441968400，首稿四类实际识别并退回、人类逐条处理通过，但修订稿新出现重要的交接质量概念/测量缺口，交付按规则再次退回。前三轮合计20账本调用，已知149911token/¥1.5437068400，1次超时用量与费用未知，保守占用182390，未突破当时累计29调用/300000边界，三轮HTTP/schema/storage均已清理。真实断网恢复/终审/用量CSV全流程尚未实跑完成，不能宣称M3通过。
+- 第三轮实际新意见后，只完善合成验收材料：方案/术语/数据口径/正文统一“交接质量”，明确固定四项字段的资料完整率、缺漏与24小时追问窗口、审核前自然日协作负荷及后续预注册验证；坏/好稿同一结果对象，原待证伪断言仍在第三段。断网/恢复放在初始方案中预设的独立同成员模块，使用无历史、无旧错误断言的正确文稿；原模块的历史不采纳和终审验证保持完整。真实PlanContent和三份DOCX/ZIP/XML检查及新完整mock8组通过，没有修改审核指令、判据、去重阈值或产品行为。容器构建后这轮新mock独立运行并清理成功，镜像运行时源码未再变更。
+- 依据发起人已授权的M3真实验收范围，在明确说明前三轮失败及用量后追加一轮有界真实验收：最多24账本调用、300000保守token、单请求120秒、整轮900秒；与前三轮合计上限44账本/482390保守token。调用只读取本项目.env中的DEEPSEEK_API_KEY，不输出或提交Key。第4轮已结束，结果如下。
+- 第4轮真实验收仍未通过：5个真实调用，已知48146token/估算¥0.5893330000；specification/citation抽取/引用对应/logic完成，linkage已返回有效用量但completion_tokens=8192，命中output_truncated，整个报告incomplete、交付ai_review_partial_failure，未进入终审也未被误判通过。没有自动放宽输出上限、修改报告或进入M4。
+- 四轮累计 **25次真实网络/账本调用，已知198057token，已知估算费用¥2.1330398400**；另1次真实超时用量/费用未知，继续保留32479，累计保守token230536。逐调用call_id唯一，历史Decimal费用独立重算与逐审核员/report/usage一致；费用以DeepSeek账单为准，未知不能当零。四轮报告均保持success=false，HTTP/存储/schema驱动清理全true；另按四份报告精确schema名执行只读参数查询，4个schema确已不存在。16份证据JSON/CSV未发现Key、Authorization或凭据样式。真实“修订进入终审→采用→断网→公开重试恢复→管理员CSV”全流程仍未跑完；对应替身/API/浏览器测试均通过，不能代替真实验收。
+- 已准备但**未应用**的后续候选为仅将linkage.max_tokens从8192提高到16384；模型、思考、价格、其他审核员和120秒时限保持不变。按现有价格快照，单次最坏输出估算上限从¥0.221184升至¥0.442368（不含输入）。使用临时配置替身完整验证8组通过：19调用/3000已知token，4次断网预留136321，保守合计139321≤300000；没有真实调用或修改正式配置。下一轮拟限制最多24账本/300000保守token，需发起人在Q-M3-14-02确认新增付费输出上限，再应用、验证并继续真实验收；现阶段正式配置仍8192。
+- 证据均在忽略目录.verification：M3-14-pytest.log与-pytest-final.log、report-view-regression、retry-final、citation-heading-regression、components-types/build、browser及其initial/selector-failure/cleanup/schema-cleanup、acceptance各mock/预算/预检/超时边界、M3-14-fixture-refinement三文稿与方案、四份acceptance-live日志、M3-acceptance/run-20261112-053121-090305cc、054124-f55fa451、055118-79790ae6及061058-77c1d088、live-final-four-runs.json、wheel-verification-language-final、container-summary/source-comparison/resource-before/after、linkage-output-proposal.diff与acceptance-output-proposal-mock。未跟踪.env、dist或验证产物，所有代码只在platform；本项代码独立提交，**M3验收尚未通过，等待输出上限决定，不开始M4。**

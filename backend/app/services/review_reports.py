@@ -13,6 +13,7 @@ from app.models import DeliveryVersion, DeliveryWorkflow, Project, ReviewJob
 from app.models.review_report import ReviewAnnotation, ReviewFinding, ReviewReport, ReviewSummary
 from app.review.reviewers.schemas import HistoricalOpinion, OpinionDraft, RecordedOpinion
 from app.schemas.plans import PlanContent
+from app.schemas.review_jobs import ReviewProgress
 from app.services.delivery_states import transition_review
 from app.services.plans import get_latest_plan
 from app.services.projects import require_member
@@ -522,6 +523,8 @@ def get_report_internal(db, item, *, viewer_owner_id=None):
 
 
 def get_review_report(db, project_id, delivery_id, user_id):
+    from app.services.review_retry import can_retry_review
+
     require_member(db, project_id, user_id)
     item = db.scalar(
         select(DeliveryVersion).where(
@@ -530,7 +533,61 @@ def get_review_report(db, project_id, delivery_id, user_id):
     )
     if item is None:
         raise ReportNotFoundError
-    return get_report_internal(db, item)
+    result = get_report_internal(db, item)
+    workflow = item.review_workflow
+    plan = get_latest_plan(db, project_id)
+    module = (
+        next(
+            (
+                entry
+                for entry in PlanContent.model_validate(plan.content).modules
+                if entry.id == item.module_id
+            ),
+            None,
+        )
+        if plan
+        else None
+    )
+    can_handle = user_id == item.submitted_by or (
+        module is not None and user_id in module.assignee_ids
+    )
+    # These capabilities describe this human view only. Agent/internal report contracts
+    # and their narrower history filtering must remain unchanged.
+    result.update(
+        can_annotate=bool(
+            can_handle
+            and workflow is not None
+            and workflow.state in {"returned", "pending_final_review"}
+            and any(finding["duplicate_of"] is None for finding in result["opinions"])
+        ),
+        can_retry=can_retry_review(db, item, user_id),
+        workflow_revision=workflow.revision if workflow is not None else None,
+        review_progress=(
+            ReviewProgress.model_validate(item.review_progress).model_dump(mode="json")
+            if item.review_progress is not None
+            else None
+        ),
+    )
+    visible = [*result["opinions"], *result.get("history", [])]
+    if visible:
+        source_rows = db.execute(
+            select(ReviewFinding.id, DeliveryVersion.id, DeliveryVersion.version)
+            .join(ReviewSummary, ReviewSummary.id == ReviewFinding.summary_id)
+            .join(DeliveryVersion, DeliveryVersion.id == ReviewSummary.delivery_id)
+            .where(
+                ReviewFinding.id.in_([UUID(finding["finding_id"]) for finding in visible]),
+                DeliveryVersion.project_id == item.project_id,
+                DeliveryVersion.module_id == item.module_id,
+                DeliveryVersion.version <= item.version,
+            )
+        ).all()
+        sources = {
+            str(finding_id): {"delivery_id": str(source_id), "delivery_version": version}
+            for finding_id, source_id, version in source_rows
+        }
+        for finding in visible:
+            finding.update(sources[finding["finding_id"]])
+    return result
 
 
 def annotate_finding(

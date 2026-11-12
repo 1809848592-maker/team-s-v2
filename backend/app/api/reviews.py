@@ -11,11 +11,47 @@ from app.api.projects import project_error
 from app.db import get_session
 from app.models import User
 from app.schemas.review_annotations import ReviewAnnotationCreate
-from app.services import projects, review_reports
+from app.schemas.review_jobs import ReviewProgress
+from app.schemas.review_retry import ReviewRetryCreate
+from app.services import projects, review_jobs, review_reports, review_retry
 
 router = APIRouter(tags=["reviews"])
 Database = Annotated[Session, Depends(get_session)]
 CurrentUser = Annotated[User, Depends(require_user)]
+
+
+@router.post(
+    "/projects/{project_id}/deliveries/{delivery_id}/review/retry",
+    response_model=ReviewProgress,
+    dependencies=[Depends(require_csrf)],
+)
+def retry_review(
+    project_id: UUID,
+    delivery_id: UUID,
+    body: ReviewRetryCreate,
+    user: CurrentUser,
+    db: Database,
+    response: Response,
+):
+    headers = {"Cache-Control": "no-store"}
+    try:
+        result = review_retry.request_retry(
+            db, project_id, delivery_id, user.id, expected_revision=body.expected_revision
+        )
+    except projects.ProjectError as error:
+        mapped = project_error(error)
+        mapped.headers = {**(mapped.headers or {}), **headers}
+        raise mapped from None
+    except review_retry.ReviewRetryPermissionError:
+        raise HTTPException(
+            403, "只有提交人及当前模块负责人可以重试审核", headers=headers
+        ) from None
+    except review_retry.ReviewRetryNotFoundError:
+        raise HTTPException(404, "交付或审核任务不存在", headers=headers) from None
+    except review_jobs.ReviewJobConflictError:
+        raise HTTPException(409, "审核当前不能重试，请刷新后核对状态", headers=headers) from None
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 def _review_error(error: Exception) -> HTTPException:

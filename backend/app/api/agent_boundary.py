@@ -44,6 +44,8 @@ def _human_action(request: Request) -> str:
         return "confirm_draft"
     if route_path.endswith("/resubmission-requests"):
         return "request_resubmission"
+    if route_path.endswith("/review/retry"):
+        return "retry_review"
     if "/review" in route_path:
         return "final_review" if route_path.endswith("/final") else "annotate_review"
     if route_path.endswith("/modules") or route_path.endswith("/modules/{module_id}"):

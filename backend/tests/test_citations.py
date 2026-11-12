@@ -7,10 +7,16 @@ from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import httpx2
 import pytest
 
 from app.review import citations
-from app.review.citation_databases import CitationQuery, CitationVerification, ProviderEvidence
+from app.review.citation_databases import (
+    CitationDatabaseClient,
+    CitationQuery,
+    CitationVerification,
+    ProviderEvidence,
+)
 from app.review.citations import review_citations
 from app.review.extract_types import ExtractedDocument, ExtractionWarning, TextLocation, TextSegment
 from app.review.llm import LLMRequestError
@@ -393,7 +399,7 @@ def test_complete_negative_database_evidence_produces_a_program_blocking_opinion
     assert finding["basis"]["excerpt"] == RAW
     assert finding["source"] == "program"
     assert finding["reviewer"] == "citation_database"
-    assert finding["instruction_version"] == "citation-database/1"
+    assert finding["instruction_version"] == "citation-database/2"
     assert finding["model"] is None and finding["call_id"] is None
     assert finding["document_sha256"] == result["document_sha256"]
     assert finding["reference_id"] == "R1"
@@ -419,6 +425,111 @@ def test_chinese_no_match_stays_unverified_without_blocking_nonexistence_opinion
     assert result["database_findings"] == []
     assert result["references"][0]["verification"]["status"] == "unverified"
     assert result["coverage"]["uncovered"]
+
+
+@pytest.fixture
+def empty_citation_databases():
+    requests, queries = [], []
+
+    def empty_results(request):
+        requests.append(request)
+        assert request.method == "GET" and request.url.path == "/works"
+        assert "authorization" not in request.headers
+        if request.url.host == "api.crossref.org":
+            body = {
+                "status": "ok",
+                "message-type": "work-list",
+                "message": {"items": [], "total-results": 0},
+            }
+        else:
+            assert request.url.host == "api.openalex.org"
+            body = {"results": [], "meta": {"count": 0}}
+        return httpx2.Response(200, json=body)
+
+    class RecordingDatabase(CitationDatabaseClient):
+        def verify(self, query):
+            queries.append(query)
+            return super().verify(query)
+
+    return (
+        RecordingDatabase(transport=httpx2.MockTransport(empty_results)),
+        queries,
+        requests,
+    )
+
+
+@pytest.mark.parametrize("heading", ["参考文献", "参考文献:", "参考文献：", "  参考文献：  "])
+def test_chinese_bibliography_heading_does_not_reclassify_english_reference(
+    heading, empty_citation_databases
+):
+    database, queries, requests = empty_citation_databases
+    raw = heading + "\n" + RAW
+    extracted = reference(evidence=[{"location": location(), "excerpt": raw}], doi=None)
+    result = review(
+        FakeClient(extraction(extracted), alignment()), database, document=document(raw=raw)
+    )
+    assert result["status"] == "completed"
+    assert len(queries) == 1 and queries[0].is_chinese is False
+    assert len(requests) == 2
+    assert {request.url.host for request in requests} == {"api.crossref.org", "api.openalex.org"}
+    saved = result["references"][0]
+    # 原有字段schema会规范化边缘空白；语言判断不能再删改已验证的摘录。
+    assert saved["raw_reference"] == raw.strip() and saved["evidence"][0]["excerpt"] == raw.strip()
+    assert all(saved["evidence"][0]["location"][key] == value for key, value in location().items())
+    assert saved["verification"]["status"] == "not_found"
+    assert {source["status"] for source in saved["verification"]["sources"]} == {"no_match"}
+    assert len(result["database_findings"]) == 1
+    assert result["database_findings"][0]["severity"] == "blocking"
+    assert result["database_findings"][0]["instruction_version"] == "citation-database/2"
+
+
+@pytest.mark.parametrize(
+    ("raw", "title", "authors"),
+    [
+        ("参考文献\n" + CN_RAW, "团队协作研究", ["王明"]),
+        ("参考文献\n" + RAW.replace("Smith", "王明"), TITLE, ["王明"]),
+        ("[1] Smith (2020).\n参考文献\nJournal of Research.", "参考文献", ["Smith"]),
+        ("参考文献\n" + RAW + "\n科研实践", TITLE, ["Smith"]),
+        ("参考文献核验说明\n" + RAW, TITLE, ["Smith"]),
+        ("参考文献：" + RAW, TITLE, ["Smith"]),
+    ],
+)
+def test_bibliography_heading_filter_preserves_real_or_uncertain_chinese_protection(
+    raw, title, authors, empty_citation_databases
+):
+    database, queries, requests = empty_citation_databases
+    extracted = reference(
+        evidence=[{"location": location(), "excerpt": raw}],
+        title=title,
+        authors=authors,
+        year=2021 if raw.endswith(CN_RAW) else 2020,
+        doi=None,
+    )
+    result = review(
+        FakeClient(extraction(extracted), alignment()), database, document=document(raw=raw)
+    )
+    assert result["status"] == "completed"
+    assert len(queries) == 1 and queries[0].is_chinese is True
+    assert len(requests) == 2
+    saved = result["references"][0]
+    assert saved["raw_reference"] == raw and saved["evidence"][0]["excerpt"] == raw
+    assert all(saved["evidence"][0]["location"][key] == value for key, value in location().items())
+    assert saved["verification"]["status"] == "unverified"
+    assert {source["status"] for source in saved["verification"]["sources"]} == {"no_match"}
+    assert result["database_findings"] == []
+
+
+def test_missing_title_keeps_chinese_heading_conservative(empty_citation_databases):
+    database, queries, requests = empty_citation_databases
+    raw = "参考文献\n" + RAW
+    extracted = reference(evidence=[{"location": location(), "excerpt": raw}], title=None, doi=None)
+    result = review(
+        FakeClient(extraction(extracted), alignment()), database, document=document(raw=raw)
+    )
+    assert result["status"] == "completed"
+    assert len(queries) == 1 and queries[0].is_chinese is True
+    assert requests == [] and result["database_findings"] == []
+    assert result["references"][0]["verification"]["status"] == "unverified"
 
 
 def test_technical_database_failure_is_incomplete_and_never_nonexistence():

@@ -18,15 +18,17 @@ from app.review.reviewers.instructions import load_citation_instruction
 from app.review.reviewers.schemas import HistoricalOpinion
 from app.services.llm_usage import QuotaExceededError
 
-DATABASE_RULE_VERSION = "citation-database/1"
+DATABASE_RULE_VERSION = "citation-database/2"
 MAX_DATABASE_QUERIES = 100
 DATABASE_BUDGET_SECONDS = 120
 _DATABASE_RULE = (
     "在两个数据库充分查询均成功且无匹配时，仅对非中文文献报告本次数据库查无此条；"
     "中文未检出、弱匹配、元数据冲突及接口故障均未能核验，不证明全球不存在。"
+    "语言判断仅忽略独立成行的文献表标题，文献标题、作者和条目中的汉字仍受保护。"
 )
 _COORDINATES = tuple(TextLocation.__dataclass_fields__)
 _DOI = re.compile(r"10\.\d{4,9}/[A-Za-z0-9][A-Za-z0-9._;()/:+%-]{0,200}", re.I)
+_BIBLIOGRAPHY_HEADINGS = frozenset({"参考文献", "参考文献:", "参考文献："})
 
 
 def _normalized(value):
@@ -197,12 +199,19 @@ def _database_finding(reference, verification, document_hash):
 
 def _query(reference):
     raw = _reference_text(reference)
+    # 章节标题不说明条目语言；元数据不明时仍保守使用全部原文。
+    language_text = (
+        "\n".join(line for line in raw.splitlines() if line.strip() not in _BIBLIOGRAPHY_HEADINGS)
+        if reference.title is not None
+        else raw
+    )
+    language_text = "\n".join((language_text, reference.title or "", *reference.authors))
     return CitationQuery(
         title=reference.title,
         authors=tuple(reference.authors),
         year=reference.year,
         doi=reference.doi,
-        is_chinese=bool(re.search(r"[\u3400-\u9fff\U00020000-\U0003134f]", raw)),
+        is_chinese=bool(re.search(r"[\u3400-\u9fff\U00020000-\U0003134f]", language_text)),
     )
 
 

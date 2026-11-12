@@ -21,7 +21,7 @@ M3-07 至 M3-09 的规范、文献、逻辑及衔接审核员已接入本层，w
 | `linkage` | `deepseek-v4-pro` | `true` | 8192 |
 | `spec_draft` | `deepseek-flash` | `false` | 4096 |
 
-前五项用于交付审核员；`spec_draft` 用于已接入的平台辅助起草规范。起草指令由平台固定资源及版本控制，调用方不能指定指令路径或模型。表中思考模式为 TOML 的 `thinking` 布尔值，发送时映射为 API 的 `enabled` / `disabled`。`provider` 为 `deepseek`，`base_url` 为 `https://api.deepseek.com`，`key_env` 为 `DEEPSEEK_API_KEY`，`timeout_seconds` 默认60秒。输出和超时限额可按审核员分别调整；审核调用不能超过 worker 的执行时间预算。
+前五项用于交付审核员；`spec_draft` 用于已接入的平台辅助起草规范。起草指令由平台固定资源及版本控制，调用方不能指定指令路径或模型。表中思考模式为 TOML 的 `thinking` 布尔值，发送时映射为 API 的 `enabled` / `disabled`。`provider` 为 `deepseek`，`base_url` 为 `https://api.deepseek.com`，`key_env` 为 `DEEPSEEK_API_KEY`，普通审核员及规范起草的 `timeout_seconds` 为60秒，启用思考的逻辑和衔接审核员为120秒。M3真实验收曾出现逻辑审核60秒超时，因此延长这两项请求时限，模型、输出上限和计价快照保持原配置。输出和超时限额可按审核员分别调整；整轮仍受 worker 的执行时间预算约束，超时只能记为未完成。最终验收使用900秒整轮时限；部署时应按文档规模调整 `REVIEW_JOB_TIMEOUT_SECONDS`（默认300秒），不能靠增加请求时限绕过整轮限制。
 
 真实 Key 仅写入未纳入版本控制的 `platform/.env`，由 Compose 注入 web/worker 环境；Settings 通过 `DEEPSEEK_API_KEY` 读取并使用 `SecretStr` 保存。TOML 只写环境变量名，不写 Key。不要把 Key 放入前端、模型输出、日志、截图或提交内容。本文件和示例配置均不需要真实 Key。
 

@@ -13,7 +13,8 @@ defineProps<{ status: DeliveryReviewStatus|null|undefined; progress?: ReviewProg
       <p v-if="progress.message" class="muted">{{ progress.message }}</p>
       <p v-if="progress.status === 'retry_wait' && progress.next_attempt_at" class="muted">下次尝试：{{ dateText(progress.next_attempt_at) }}</p>
       <p v-if="progress.status === 'paused' && progress.next_attempt_at" class="muted">可再次尝试时间：{{ dateText(progress.next_attempt_at) }}</p>
-      <p v-if="progress.status === 'succeeded'" class="muted">后台处理完成，等待后续审核汇总；尚未形成审核结论。</p>
+      <p v-if="progress.status === 'succeeded' && status && ['returned', 'pending_final_review', 'adopted', 'final_returned'].includes(status)" class="muted">本轮后台审核已完成，请查看逐条审核意见和覆盖范围。</p>
+      <p v-else-if="progress.status === 'succeeded'" class="muted">后台处理完成，正在等待审核汇总。</p>
       <p v-else-if="progress.status === 'failed'" class="muted">审核尚未完成，未生成通过结论。</p>
     </template>
     <p v-else-if="status === 'ai_reviewing' || status === 'ai_review_partial_failure'" class="muted">暂未读取到后台审核进度。</p>
