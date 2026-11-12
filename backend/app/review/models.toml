@@ -67,7 +67,7 @@ model = "deepseek-v4-pro"
 base_url = "https://api.deepseek.com"
 key_env = "DEEPSEEK_API_KEY"
 thinking = true
-max_tokens = 8192
+max_tokens = 16384
 timeout_seconds = 120
 [reviewers.linkage.prices]
 currency = "CNY"

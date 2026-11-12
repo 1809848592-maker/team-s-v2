@@ -19,7 +19,7 @@
 - **M1 已由发起人于 2026-11-10 验收通过，方案制定者独立复核确认：10组验收及78项后端测试通过。**
 - 按发起人最新授权，开始M2，顺序完成M2-01至M2-07，每项独立测试/提交，最终验收后停下。
 - M2-01至M2-07均已实现、测试并独立提交；发起人于2026-11-11验收通过，方案制定者独立复核12组验收、129项后端测试及外部越权探测401。
-- M3-01至M3-13及M3-15均已实现、通过各项验证并逐项提交；M3-14“审核报告页面”实现与替身验证已完成，最终后端1778项和浏览器7组通过。真实M3验收4轮均未通过，最后一轮因衔接审核输出达8192被截断；付费输出上限调整见Q-M3-14-02，等待发起人确认。不开始M4。
+- M3-01至M3-13及M3-15均已实现、通过各项验证并逐项提交；M3-14“审核报告页面”实现与替身验证已完成，最终后端1778项和浏览器7组通过。按发起人2026-11-12继续授权，仅将衔接输出上限提高16384，相关115项及正式配置mock8组通过。第5轮真实验收中衔接成功，逻辑仍因8192上限截断，M3真实验收尚未通过；后续候选见Q-M3-14-03，不开始M4。
 
 ## M1-01：工程骨架（2026-11-10）
 
@@ -509,3 +509,17 @@ colima stop teams-m1
 - 四轮累计 **25次真实网络/账本调用，已知198057token，已知估算费用¥2.1330398400**；另1次真实超时用量/费用未知，继续保留32479，累计保守token230536。逐调用call_id唯一，历史Decimal费用独立重算与逐审核员/report/usage一致；费用以DeepSeek账单为准，未知不能当零。四轮报告均保持success=false，HTTP/存储/schema驱动清理全true；另按四份报告精确schema名执行只读参数查询，4个schema确已不存在。16份证据JSON/CSV未发现Key、Authorization或凭据样式。真实“修订进入终审→采用→断网→公开重试恢复→管理员CSV”全流程仍未跑完；对应替身/API/浏览器测试均通过，不能代替真实验收。
 - 已准备但**未应用**的后续候选为仅将linkage.max_tokens从8192提高到16384；模型、思考、价格、其他审核员和120秒时限保持不变。按现有价格快照，单次最坏输出估算上限从¥0.221184升至¥0.442368（不含输入）。使用临时配置替身完整验证8组通过：19调用/3000已知token，4次断网预留136321，保守合计139321≤300000；没有真实调用或修改正式配置。下一轮拟限制最多24账本/300000保守token，需发起人在Q-M3-14-02确认新增付费输出上限，再应用、验证并继续真实验收；现阶段正式配置仍8192。
 - 证据均在忽略目录.verification：M3-14-pytest.log与-pytest-final.log、report-view-regression、retry-final、citation-heading-regression、components-types/build、browser及其initial/selector-failure/cleanup/schema-cleanup、acceptance各mock/预算/预检/超时边界、M3-14-fixture-refinement三文稿与方案、四份acceptance-live日志、M3-acceptance/run-20261112-053121-090305cc、054124-f55fa451、055118-79790ae6及061058-77c1d088、live-final-four-runs.json、wheel-verification-language-final、container-summary/source-comparison/resource-before/after、linkage-output-proposal.diff与acceptance-output-proposal-mock。未跟踪.env、dist或验证产物，所有代码只在platform；本项代码独立提交，**M3验收尚未通过，等待输出上限决定，不开始M4。**
+
+## M3-14 后续：衔接输出上限与第5轮真实验收（2026-11-12）
+
+- 发起人在Q-M3-14-02推荐方案后回复“继续工作”，据此仅将正式`linkage.max_tokens`从8192提高到16384；`logic`仍8192，模型、思考、单价和时限不变。同步配置快照测试及部署文档。标准五调用输出费用上界为¥0.761856，每位各结构修复一次为¥1.523712，均另计输入；截断仍判未完成，未知预留不释放，没有更改审核判据、严重度或去重。
+- 相关传输、用量、集成、额度/worker及流水线回归最终 **115 passed in25.71s**。初轮1 failed/114 passed是默认配置快照仍把衔接断言为8192，修正为区分逻辑/衔接后复跑全通过；初轮日志保留。Ruff、193项格式检查及离线依赖锁校验通过，未重复运行已有1778项全量或无改动的前端浏览器验证。
+- 正式16384配置的完整mock验收 **8组通过**：19账本、3000已知token/¥0.0245664000，4次故意断网未知预留136321，保守合计139321≤300000，CSV/用量/历史价格对账及全部清理成功，无真实模型或文献请求。
+- 已授权的第5轮真实验收严格使用24账本/300000保守token、120秒请求超时参数、每份900秒总期限。**真实验收仍未通过**：5次调用，50014已知token，已知估算¥0.6494620000，无本轮未知用量。衔接实际输出9555（总17019）并成功完成；逻辑输出8192，`output_truncated`，两者均只调用一次、无结构修复。其余三个模型调用成功；整体coverage=incomplete、交付ai_review_partial_failure、任务failed、无终审记录，未误判通过。请求超时控制网络等待，不能把120秒参数表述为整次模型生成的硬性墙钟期限。
+- 五轮累计 **30次真实网络/账本调用、248071已知token、已知估算¥2.7825018400**；旧1次真实超时用量/费用仍未知，继续预留32479，累计保守token280550。Decimal按逐调用历史价格独立重算、逐审核员汇总及call_id唯一性均一致；五轮真实验收均为false。费用以厂商账单为准，未知费用不当零。
+- 五轮HTTP/存储/schema驱动清理均成功；独立新连接按五份报告的精确schema名复查，五个schema均不存在，无需额外删除。32份证据文件的80个文本/DOCX XML成员、397868字节凭据样式扫描零命中，未读取.env进行扫描。仅验收驱动安全提取Key，Key未输出或提交。
+- 正式配置离线wheel **138项（130Python+8TOML）逐字节匹配**，与上一wheel相比运行时仅linkage输出上限变动；SHA256为e07069c5099c4975b5bfb09c562e7154ed95aa839b82bd66df179566b3bb3b12。
+- 全部测试、正式/候选mock及真实验收退出后，串行构建隔离M3 Compose（18002）并up-wait通过；镜像e2e662395cbc7630bf2ee99605bfb6f8fee1229e89656407dd40976d9c20d07a，web/worker共用。168项当前源码/配置/资源/静态文件哈希一致；实际logic8192/linkage16384及各自时限/价格验证通过，迁移0020_spec_drafting(head)、Alembic无漂移、health ok，PG/web healthy、worker运行，四审核API及四前端DOM标记齐全。使用`--env-file /dev/null`，容器Key为空、live=false且不存在.env。
+- 本次容器构建新增内核OOM记录0、测试PG中断0，构建后pg_isready及SELECT1均成功；旧State.OOMKilled=true及先前构建OOM证据继续保留，不能据此宣称共享VM资源问题已根治。未停止其他环境或调整VM。
+- 后续仅逻辑输出上限8192→16384的候选已在忽略目录准备，未应用正式配置。纯配置及逐字段差异检查、Decimal复算通过；新标准五调用输出上界¥0.983040，各结构修复一次¥1.966080，另计输入。候选完整mock8组通过：19账本/3000已知token/¥0.0245664000，4次故意断网未知预留144513，保守147513≤300000，全部清理成功。没有新增付费调用，正式逻辑仍8192；候选及diff/mock证据在`.verification/M3-14-logic-16384-candidate/`，提高新的付费上限及再跑一轮见Q-M3-14-03，待发起人决定。
+- 证据：`.verification/M3-14-output-cap-pytest-initial.log`、`-pytest.log`、`-mock.log`、`M3-14-acceptance-live-fifth.log`、`M3-acceptance/run-20261112-073108-37d9e783`、`M3-14-live-rollup-final.json`、`M3-14-five-run-evidence-audit.json`、`M3-14-wheel-verification-cap16384-final.json`、`M3-14-output-cap-container-summary.json`及同前缀resource-before/after.json。所有正式修改仅在platform，.env与候选/验证产物均不跟踪，本轮独立提交。**M3真实验收尚未通过，停在Q-M3-14-03等待新的付费上限决定，不进入M4。**

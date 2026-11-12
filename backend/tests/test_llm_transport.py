@@ -116,12 +116,12 @@ def test_defaults_are_frozen_secret_free_and_only_enable_deepseek():
             4096,
         )
         assert profile.prices.input_cache_hit == Decimal("0.04")
-    for name in ("logic", "linkage"):
+    for name, max_tokens in (("logic", 8192), ("linkage", 16384)):
         profile = configuration.reviewers[name]
         assert (profile.model, profile.thinking, profile.max_tokens) == (
             "deepseek-v4-pro",
             True,
-            8192,
+            max_tokens,
         )
         assert profile.prices.output == Decimal("27")
     with pytest.raises(ValidationError):
