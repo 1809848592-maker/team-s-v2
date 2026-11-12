@@ -1,13 +1,14 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.orm import Session
 
 from app.api.auth import require_csrf, require_user
 from app.api.projects import project_error
 from app.db import get_session
 from app.models import User
+from app.schemas.bottlenecks import ProjectBottlenecks
 from app.schemas.collaboration import (
     MessageCreate,
     ModuleProgress,
@@ -16,7 +17,7 @@ from app.schemas.collaboration import (
     RequestCreate,
     RequestInfo,
 )
-from app.services import collaboration, projects
+from app.services import bottlenecks, collaboration, projects
 
 router = APIRouter(prefix="/projects/{project_id}", tags=["collaboration"])
 Database = Annotated[Session, Depends(get_session)]
@@ -42,6 +43,25 @@ ERRORS = (
     collaboration.CollaborationStateError,
     collaboration.CollaborationValidationError,
 )
+
+
+@router.get("/bottlenecks", response_model=ProjectBottlenecks)
+def project_bottlenecks(
+    project_id: UUID, user: CurrentUser, db: Database, request: Request, response: Response
+):
+    try:
+        result = bottlenecks.project_bottlenecks(
+            db,
+            project_id,
+            user.id,
+            return_after_days=request.app.state.settings.bottleneck_return_days,
+        )
+    except projects.ProjectError as error:
+        result_error = project_error(error)
+        result_error.headers = {**(result_error.headers or {}), "Cache-Control": "no-store"}
+        raise result_error from None
+    response.headers["Cache-Control"] = "no-store"
+    return result
 
 
 @router.post(

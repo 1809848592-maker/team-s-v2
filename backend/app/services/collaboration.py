@@ -501,6 +501,9 @@ def supplement_request(
     if item.status == "resolved":
         raise CollaborationStateError("已解决的需求不能继续补充")
     message = _append_message(db, item, user_id, body, "supplement")
+    if item.status == "responded":
+        # 发起人仍需补充回应，不能沿用上一次回应直接确认解决。
+        item.status = "accepted"
     return _finish_request_change(
         db,
         item,

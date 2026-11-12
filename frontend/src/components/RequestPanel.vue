@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 import { api, dateText, errorText, projectPath, requestLabels, utcDate } from '../api/client'
 import type { CollaborationRequest, Member, Module } from '../api/types'
 
-const props = defineProps<{ projectId: string; members: Member[]; accountId: string }>()
+const props = defineProps<{ projectId: string; members: Member[]; accountId: string; initialRequestId?: string }>()
 const emit = defineEmits<{ changed: [] }>()
 const modules = ref<Module[]>([]), requests = ref<CollaborationRequest[]>([])
 const selectedId = ref(''), detail = ref<CollaborationRequest | null>(null), mineOnly = ref(false)
@@ -27,7 +27,7 @@ const canRespond = computed(() => !!detail.value && ['accepted', 'responded'].in
 const canResolve = computed(() => detail.value?.status === 'responded' && detail.value.created_by === props.accountId)
 const canSupplement = computed(() => !!detail.value && detail.value.status !== 'resolved' && detail.value.created_by === props.accountId)
 function selectVisible() {
-  if (!visibleRequests.value.some(item => item.id === selectedId.value)) selectedId.value = visibleRequests.value[0]?.id ?? ''
+  if (!visibleRequests.value.some(item => item.id === selectedId.value)) selectedId.value = visibleRequests.value.find(item => item.id === props.initialRequestId)?.id ?? visibleRequests.value[0]?.id ?? ''
 }
 async function load() {
   if (busy.value) return

@@ -1,4 +1,6 @@
 export interface Project { id: string; name: string; role: 'leader'|'member'; created_by: string; created_at: string }
+export interface Bottleneck {kind:'submission_overdue'|'request_overdue'|'resubmission_overdue';module_id:string|null;delivery_id:string|null;request_id:string|null;title:string;since:string}
+export interface ProjectBottlenecks {project_id:string;evaluated_at:string;return_after_days:number;items:Bottleneck[]}
 export interface Member { user_id: string; username: string; role: 'leader'|'member' }
 export interface Module { id: string; name: string; assignee_ids: string[]; deadline: string|null; goal: string; core_argument: string; scope_in: string; scope_out: string; upstream: {module_id:string;needs:string}[]; downstream_handoff: string; delivery_format: 'docx'|'pptx'|'pdf'|'md'|'other'; plan_version_id?: string }
 export interface PlanContent { research_question:string; final_deliverable:string; deadline:string|null; argument:string; terms:{term:string;definition:string;source:string}[]; data_definitions:{variable:string;source:string;processing:string}[]; modules:Module[] }

@@ -2,7 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Account } from '../api/auth'
 import { ApiError, api, dateText, errorText, isPlatformReviewWorker, isProjectLinkageWorker, isPlanSelfCheckWorker, planSelfCheckEventLabels, projectLinkageEventLabels, projectPath, requestLabels, reviewJobEventLabels, reviewStatusText, stageLabels } from '../api/client'
-import type { Project, Member, Module, ModuleProgress, Progress, Delivery, DraftView, CollaborationRequest, Notification, ProjectEvent, ModelDisclosure } from '../api/types'
+import type { Project, Member, Module, ModuleProgress, Progress, Delivery, DraftView, CollaborationRequest, Notification, ProjectEvent, ModelDisclosure, Bottleneck } from '../api/types'
 import PlanPanel from './PlanPanel.vue'
 import SpecPanel from './SpecPanel.vue'
 import TaskPanel from './TaskPanel.vue'
@@ -15,6 +15,7 @@ import ModelDisclosureNotice from './ModelDisclosureNotice.vue'
 import AdminUsagePanel from './AdminUsagePanel.vue'
 import ProjectLinkagePanel from './ProjectLinkagePanel.vue'
 import { useReviewPolling } from '../composables/useReviewPolling'
+import { useBottlenecks } from '../composables/useBottlenecks'
 const props = defineProps<{account:Account;busy:boolean;logoutError?:string}>()
 defineEmits<{logout:[]}>()
 const projects = ref<Project[]>([]), selected = ref(''), members = ref<Member[]>([]), modules = ref<Module[]>([])
@@ -29,11 +30,27 @@ const tabs = [{key:'board',label:'项目看板'},{key:'plan',label:'方案与分
 const tab = ref<string>('board')
 const agentPageVersion = ref(0)
 const preferredModule = ref('')
+const preferredRequest = ref('')
 const current = computed(()=>projects.value.find(p=>p.id===selected.value))
 const leader = computed(()=>current.value?.role==='leader')
 const unread = computed(()=>notifications.value.filter(n=>!n.read_at))
 const todo = computed(()=>requests.value.filter(r=>r.status==='responded' ? r.created_by===props.account.id : r.status==='accepted' ? r.accepted_by===props.account.id : r.status==='open' && (r.target_user_id===props.account.id || modules.value.some(m=>m.id===r.target_module_id && m.assignee_ids.includes(props.account.id)))))
 const pendingDrafts = computed(()=>drafts.value.filter(draft=>draft.owner_id===props.account.id && draft.status==='pending_confirmation'))
+const { data: bottlenecks, error: bottleneckError, refreshing: bottleneckRefreshing, refresh: refreshBottlenecks } = useBottlenecks({
+  contextKey: () => `${selected.value}:${props.account.id}`,
+  projectId: () => selected.value,
+  enabled: () => leader.value && tab.value === 'board' && !loading.value && !acting.value && !error.value,
+})
+function moduleBottlenecks(moduleId: string) { return bottlenecks.value?.items.filter(item => item.module_id === moduleId) ?? [] }
+function bottleneckText(item: Bottleneck) {
+  if (item.kind === 'submission_overdue') return '超期未提交'
+  if (item.kind === 'request_overdue') return '需求回应超时'
+  return `退回超过 ${bottlenecks.value?.return_after_days} 天未重新提交`
+}
+function openBottleneck(item: Bottleneck) {
+  if (item.request_id) { preferredRequest.value = item.request_id; tab.value = 'requests' }
+  else if (item.module_id) { preferredModule.value = item.module_id; tab.value = 'tasks' }
+}
 const { error: reviewError, refreshing: reviewRefreshing, retry: retryReview } = useReviewPolling({
   contextKey: () => `${selected.value}:${props.account.id}`,
   projectId: () => selected.value,
@@ -62,7 +79,7 @@ async function loadProject() {
   const pid = selected.value, accountId = props.account.id, sequence = ++serial
   if(!pid) { loading.value = false; return }
   loading.value = true; error.value = ''; inviteLink.value = ''
-  if (pid !== loadedId) { members.value=[]; modules.value=[]; progress.value=[]; deliveries.value=[]; requests.value=[]; events.value=[]; notifications.value=[]; drafts.value=[]; preferredModule.value='' }
+  if (pid !== loadedId) { members.value=[]; modules.value=[]; progress.value=[]; deliveries.value=[]; requests.value=[]; events.value=[]; notifications.value=[]; drafts.value=[]; preferredModule.value=''; preferredRequest.value='' }
   const params = new URLSearchParams(window.location.search)
   if(!inviteToken.value) {params.set('project',pid); window.history.replaceState(null,'',`/?${params}`)}
   try {
@@ -136,7 +153,7 @@ async function readNotification(notification:Notification) {
 }
 onMounted(()=>{void loadProjects();void loadDisclosure()})
 watch(()=>props.account.id,()=>{
-  ++serial; loadedId=''; drafts.value=[]; projects.value=[]; selected.value=''; members.value=[]; modules.value=[]; progress.value=[]; deliveries.value=[]; requests.value=[]; events.value=[]; notifications.value=[]
+  ++serial; loadedId=''; drafts.value=[]; projects.value=[]; selected.value=''; members.value=[]; modules.value=[]; progress.value=[]; deliveries.value=[]; requests.value=[]; events.value=[]; notifications.value=[]; preferredModule.value=''; preferredRequest.value=''
   loading.value=true;acting.value=false;modelDisclosure.value=null;creationConsent.value=false;tab.value='board';void loadDisclosure();void loadProjects()
 })
 onBeforeUnmount(()=>{mounted=false;++serial;++disclosureSequence})
@@ -164,15 +181,21 @@ onBeforeUnmount(()=>{mounted=false;++serial;++disclosureSequence})
         <template v-if="tab==='board'">
           <p v-if="reviewError" class="error" role="alert">审核进度读取失败：{{reviewError}} <button class="btn quiet" :disabled="reviewRefreshing || loading || acting" @click="retryReview">重试读取审核进度</button></p>
           <section class="board-intro"><div><p class="eyebrow">协作现场</p><h2>让研究沿着清楚的分工推进。</h2><p class="muted">以交付记录进展，以回应完成交接。</p></div><div class="board-count"><strong>{{modules.length}}</strong><span>个分工模块</span></div></section>
+          <section v-if="leader" class="panel bottleneck-panel" aria-labelledby="bottleneck-title">
+            <div class="panel-heading"><h2 id="bottleneck-title">超时卡点<span v-if="bottlenecks?.items.length" class="bottleneck-count"> · {{bottlenecks.items.length}}</span></h2><button class="btn quiet" :disabled="bottleneckRefreshing || loading || acting" @click="refreshBottlenecks">刷新卡点</button></div>
+            <p v-if="bottleneckError" class="error" role="alert">卡点读取失败：{{bottleneckError}} <button class="btn quiet" :disabled="bottleneckRefreshing || loading || acting" @click="refreshBottlenecks">重试读取卡点</button></p>
+            <p v-else-if="!bottlenecks" class="muted" role="status">正在读取卡点…</p>
+            <template v-if="bottlenecks"><p class="muted">检测于 {{dateText(bottlenecks.evaluated_at)}}</p><p v-if="!bottlenecks.items.length" class="empty">当前没有超时卡点。</p><ul v-else class="compact-list bottleneck-list"><li v-for="item in bottlenecks.items" :key="`${item.kind}:${item.request_id ?? item.module_id}`"><div><strong>{{bottleneckText(item)}}</strong><p>{{item.title}}</p><time>超时起点 · {{dateText(item.since)}}</time></div><button class="btn quiet" @click="openBottleneck(item)">{{item.request_id?'处理需求':'处理交付'}} →</button></li></ul></template>
+          </section>
           <div v-if="!modules.length && !loading" class="panel empty"><h3>从共同的方案开始</h3><p>{{leader?'先邀请组员，再到“方案与分工”发布研究目标和模块。':'负责人发布方案后，分工将在这里显示。'}}</p><button v-if="leader" class="btn primary" @click="tab='plan'">制定方案与分工</button></div>
-          <section v-else class="module-grid" aria-label="分工模块看板"><article v-for="module in modules" :key="module.id" class="module-card"><div class="toolbar"><span class="module-format">{{module.delivery_format.toUpperCase()}}</span><span class="tag" :class="{submitted:stage(module.id)?.stage==='submitted'}">{{stageLabels[stage(module.id)?.stage ?? 'not_started']}}</span></div><h3>{{module.name}}</h3><p class="module-goal">{{module.goal}}</p><p class="muted">负责人 · {{module.assignee_ids.map(name).join('、')}}</p><p class="muted">截止 · {{dateText(module.deadline)}}</p><div class="last-record"><template v-if="stage(module.id)?.last_report"><p>{{stage(module.id)?.last_report?.summary}}</p><span>{{progressSource(stage(module.id)!.last_report!)}} · {{dateText(stage(module.id)?.last_report?.created_at)}}</span></template><p v-else class="muted">尚无进度回报</p></div><p class="muted">交付 · <template v-if="latestDelivery(module.id)">v{{latestDelivery(module.id)!.version}} · {{reviewStatusText(latestDelivery(module.id)!.review_status)}}</template><template v-else>尚未提交</template></p><DeliveryReviewStatus v-if="latestDelivery(module.id)" :status="latestDelivery(module.id)!.review_status" :progress="latestDelivery(module.id)!.review_progress" hide-status /><DeliveryVersionBinding v-if="latestDelivery(module.id)" :delivery="latestDelivery(module.id)!" compact /><button class="btn quiet" @click="preferredModule=module.id;tab='tasks'">查看任务与交付 →</button></article></section>
+          <section v-else class="module-grid" aria-label="分工模块看板"><article v-for="module in modules" :key="module.id" class="module-card" :class="{bottleneck:moduleBottlenecks(module.id).length > 0}"><div class="toolbar"><span class="module-format">{{module.delivery_format.toUpperCase()}}</span><span class="tag" :class="{submitted:stage(module.id)?.stage==='submitted'}">{{stageLabels[stage(module.id)?.stage ?? 'not_started']}}</span></div><h3>{{module.name}}</h3><ul v-if="moduleBottlenecks(module.id).length" class="module-bottlenecks" aria-label="模块超时卡点"><li v-for="item in moduleBottlenecks(module.id)" :key="`${item.kind}:${item.request_id ?? item.delivery_id ?? item.module_id}`">{{bottleneckText(item)}}</li></ul><p class="module-goal">{{module.goal}}</p><p class="muted">负责人 · {{module.assignee_ids.map(name).join('、')}}</p><p class="muted">截止 · {{dateText(module.deadline)}}</p><div class="last-record"><template v-if="stage(module.id)?.last_report"><p>{{stage(module.id)?.last_report?.summary}}</p><span>{{progressSource(stage(module.id)!.last_report!)}} · {{dateText(stage(module.id)?.last_report?.created_at)}}</span></template><p v-else class="muted">尚无进度回报</p></div><p class="muted">交付 · <template v-if="latestDelivery(module.id)">v{{latestDelivery(module.id)!.version}} · {{reviewStatusText(latestDelivery(module.id)!.review_status)}}</template><template v-else>尚未提交</template></p><DeliveryReviewStatus v-if="latestDelivery(module.id)" :status="latestDelivery(module.id)!.review_status" :progress="latestDelivery(module.id)!.review_progress" hide-status /><DeliveryVersionBinding v-if="latestDelivery(module.id)" :delivery="latestDelivery(module.id)!" compact /><button class="btn quiet" @click="preferredModule=module.id;tab='tasks'">查看任务与交付 →</button></article></section>
           <div class="board-bottom"><section class="panel"><div class="panel-heading"><h2>待我处理</h2><button class="btn quiet" @click="tab='requests'">查看协作需求</button></div><p v-if="!todo.length && !pendingDrafts.length" class="empty">当前没有待你处理的事项。</p><ul class="compact-list"><li v-for="draft in pendingDrafts" :key="draft.id"><button class="text-button" @click="preferredModule=draft.module_id;tab='tasks'">确认交付稿 · {{draft.filename}}</button><span class="tag">待本人确认</span></li><li v-for="request in todo.slice(0,8)" :key="request.id"><button class="text-button" @click="tab='requests'">{{request.title}}</button><span class="tag">{{requestLabels[request.status]}}</span></li></ul></section><section class="panel"><div class="panel-heading"><h2>最近活动</h2><button class="btn quiet" @click="tab='timeline'">完整时间线</button></div><ul class="compact-list"><li v-for="event in events.slice(-6).reverse()" :key="event.id"><span>{{eventActor(event)}} · {{activityLabels[event.event_type] ?? event.event_type}}</span><time>{{dateText(event.occurred_at)}}</time></li></ul></section></div>
         </template>
         <PlanPanel v-if="tab==='plan'" :key="`${selected}:${account.id}`" :project-id="selected" :account-id="account.id" :members="members" :leader="leader" @changed="loadProject"/>
         <SpecPanel v-if="tab==='spec'" :key="`${selected}:${account.id}`" :project-id="selected" :account-id="account.id" :leader="leader" @changed="loadProject"/>
         <TaskPanel v-if="tab==='tasks'" :initial-module-id="preferredModule" :key="selected" :project-id="selected" :members="members" :account-id="account.id" @changed="loadProject"/>
         <ProjectLinkagePanel v-if="tab==='linkage'" :key="`${selected}:${account.id}`" :project-id="selected" :account-id="account.id" :leader="leader" :members="members" :modules="modules" @changed="loadProject" @open-requests="tab='requests'"/>
-        <RequestPanel v-if="tab==='requests'" :key="selected" :project-id="selected" :members="members" :account-id="account.id" @changed="loadProject"/>
+        <RequestPanel v-if="tab==='requests'" :key="selected" :project-id="selected" :members="members" :account-id="account.id" :initial-request-id="preferredRequest" @changed="loadProject"/>
         <AgentPanel v-if="tab==='agents'" :key="`${selected}:${agentPageVersion}`" :project-id="selected" :account-id="account.id" @changed="loadProject"/>
         <EventTimeline v-if="tab==='timeline'" :key="selected" :project-id="selected" :members="members" :modules="modules" :deliveries="deliveries" :leader="leader"/>
       </template>
