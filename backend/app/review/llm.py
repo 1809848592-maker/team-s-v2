@@ -128,11 +128,12 @@ class LLMClient:
         self,
         *,
         project_id: UUID,
-        job_id: UUID,
+        job_id: UUID | None,
         reviewer: str,
         instruction_version: str,
         messages: list[dict],
         call_id: UUID | None = None,
+        spec_draft_request_id: UUID | None = None,
     ) -> dict:
         mock = isinstance(self._transport, httpx2.MockTransport)
         if not self._live_enabled and not mock:
@@ -148,7 +149,9 @@ class LLMClient:
             raise LLMConfigurationError
         if (
             not isinstance(project_id, UUID)
-            or not isinstance(job_id, UUID)
+            or (job_id is None) == (spec_draft_request_id is None)
+            or (job_id is not None and not isinstance(job_id, UUID))
+            or (spec_draft_request_id is not None and not isinstance(spec_draft_request_id, UUID))
             or (call_id is not None and not isinstance(call_id, UUID))
             or not isinstance(instruction_version, str)
             or not instruction_version
@@ -188,6 +191,7 @@ class LLMClient:
         identity = call_id if call_id is not None else uuid4()
         usage_service = _usage_service()
         # 配额/重复call异常直接透传；这里尚未打开HTTP连接。
+        source = {"spec_draft_request_id": spec_draft_request_id} if spec_draft_request_id else {}
         usage_service.reserve_call(
             self._sessions,
             project_id=project_id,
@@ -201,6 +205,7 @@ class LLMClient:
             reserved_tokens=len(encoded) + 1024 + profile.max_tokens,
             prices=profile.prices.model_dump(mode="json"),
             limits=self._quota_limits,
+            **source,
         )
         usage, result, output_hash, code = None, None, None, None
         try:

@@ -13,6 +13,7 @@ from app.events import record_event
 from app.models.delivery import DeliveryVersion
 from app.models.llm_usage import DailyBudget, LLMProjectPolicy, ModelCall, ReviewAdmission
 from app.models.review_job import ReviewJob
+from app.models.spec_draft import SpecDraftRequest
 
 
 class LLMUsageError(ValueError):
@@ -72,6 +73,28 @@ def _budget(db, scope, day):
 
 
 def _event(db, call, job_id, event_type):
+    if call.spec_draft_request_id is not None:
+        source = db.get(SpecDraftRequest, call.spec_draft_request_id)
+        record_event(
+            db,
+            project_id=call.project_id,
+            actor_type="agent",
+            actor_id="platform-spec-drafter",
+            event_type=event_type,
+            object_type="spec_draft_request",
+            object_id=source.id,
+            details={
+                "execution_origin": "platform_spec_draft",
+                "initiated_by": str(source.requested_by),
+                "request_id": str(source.id),
+                "call_id": str(call.id),
+                "reviewer": call.reviewer,
+                "model": call.model,
+                "status": call.status,
+                "error_code": call.error_code,
+            },
+        )
+        return
     delivery = db.scalar(select(DeliveryVersion).join(ReviewJob).where(ReviewJob.id == job_id))
     record_event(
         db,
@@ -101,7 +124,7 @@ def reserve_call(
     sessions,
     *,
     project_id: UUID,
-    job_id: UUID,
+    job_id: UUID | None,
     call_id: UUID,
     reviewer: str,
     instruction_version: str,
@@ -111,10 +134,16 @@ def reserve_call(
     reserved_tokens: int,
     prices: dict,
     limits: QuotaLimits | None = None,
+    spec_draft_request_id: UUID | None = None,
 ) -> UUID:
     limits = limits or QuotaLimits()
     if (
-        type(reserved_tokens) is not int
+        not isinstance(project_id, UUID)
+        or not isinstance(call_id, UUID)
+        or (job_id is None) == (spec_draft_request_id is None)
+        or (job_id is not None and not isinstance(job_id, UUID))
+        or (spec_draft_request_id is not None and not isinstance(spec_draft_request_id, UUID))
+        or type(reserved_tokens) is not int
         or not 0 < reserved_tokens <= 10_000_000
         or re.fullmatch(r"[a-f0-9]{64}", input_hash) is None
         or not all(
@@ -130,16 +159,34 @@ def reserve_call(
         raise LLMUsageError("模型调用元数据无效")
     with sessions() as db:
         try:
-            job = db.scalar(
-                select(ReviewJob)
-                .join(DeliveryVersion)
-                .where(ReviewJob.id == job_id, DeliveryVersion.project_id == project_id)
-            )
-            if job is None:
-                raise LLMUsageError("正式交付审核任务不存在")
-            from app.services.model_disclosure import require_review_consent
+            from app.services import model_disclosure
 
-            require_review_consent(db, project_id)
+            if spec_draft_request_id is not None:
+                from app.models import Project
+                from app.services.projects import require_member
+
+                # 短事务内重查当前负责人；提交后释放锁，再建立网络连接。
+                db.scalar(
+                    select(Project.id).where(Project.id == project_id).with_for_update(read=True)
+                )
+                source = db.get(SpecDraftRequest, spec_draft_request_id)
+                if source is None or source.project_id != project_id or reviewer != "spec_draft":
+                    raise LLMUsageError("规范起草调用来源无效")
+                require_member(db, project_id, source.requested_by, leader=True)
+                if source.disclosure_version != model_disclosure.DISCLOSURE_VERSION:
+                    raise model_disclosure.DisclosureVersionError(
+                        "数据外发告知已更新，请重新阅读后重试"
+                    )
+            else:
+                job = db.scalar(
+                    select(ReviewJob)
+                    .join(DeliveryVersion)
+                    .where(ReviewJob.id == job_id, DeliveryVersion.project_id == project_id)
+                )
+                if job is None:
+                    raise LLMUsageError("正式交付审核任务不存在")
+
+            model_disclosure.require_review_consent(db, project_id)
             current = _now(db)
             day = current.date()
             retry_at = datetime.combine(day + timedelta(days=1), datetime.min.time(), UTC)
@@ -160,10 +207,24 @@ def reserve_call(
                 .where(LLMProjectPolicy.project_id == project_id)
                 .with_for_update()
             )
-            if db.get(ModelCall, call_id) is not None:
+            if db.get(ModelCall, call_id) is not None or (
+                spec_draft_request_id is not None
+                and db.scalar(
+                    select(ModelCall.id).where(
+                        ModelCall.spec_draft_request_id == spec_draft_request_id
+                    )
+                )
+                is not None
+            ):
                 raise LLMDuplicateCallError("该模型调用标识已使用，不能重复外发")
-            admission = db.scalar(
-                select(ReviewAdmission).where(ReviewAdmission.job_id == job_id).with_for_update()
+            admission = (
+                db.scalar(
+                    select(ReviewAdmission)
+                    .where(ReviewAdmission.job_id == job_id)
+                    .with_for_update()
+                )
+                if job_id is not None
+                else None
             )
             if admission is None:
                 if project_budget.review_count >= policy.daily_review_limit:
@@ -178,17 +239,20 @@ def reserve_call(
             ):
                 raise QuotaExceededError("platform_tokens", retry_at)
             if admission is None:
-                admission = ReviewAdmission(job_id=job_id, project_id=project_id, day=day)
-                db.add(admission)
-                db.flush()
+                if job_id is not None:
+                    admission = ReviewAdmission(job_id=job_id, project_id=project_id, day=day)
+                    db.add(admission)
+                    db.flush()
                 project_budget.review_count += 1
                 global_budget.review_count += 1
-            admission.call_count += 1
+            if admission is not None:
+                admission.call_count += 1
             global_budget.reserved_tokens += reserved_tokens
             project_budget.reserved_tokens += reserved_tokens
             call = ModelCall(
                 id=call_id,
-                admission_id=admission.id,
+                admission_id=admission.id if admission is not None else None,
+                spec_draft_request_id=spec_draft_request_id,
                 project_id=project_id,
                 day=day,
                 reviewer=reviewer,
@@ -325,8 +389,8 @@ def settle_call(
                 for bucket in (global_budget, project_budget):
                     bucket.reserved_tokens -= call.reserved_tokens
                     bucket.charged_tokens += total
-            admission = db.get(ReviewAdmission, call.admission_id)
-            _event(db, call, admission.job_id, "llm_call_settled")
+            admission = db.get(ReviewAdmission, call.admission_id) if call.admission_id else None
+            _event(db, call, admission.job_id if admission else None, "llm_call_settled")
             db.commit()
             return True
         except Exception:

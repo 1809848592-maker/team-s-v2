@@ -19,7 +19,7 @@
 - **M1 已由发起人于 2026-11-10 验收通过，方案制定者独立复核确认：10组验收及78项后端测试通过。**
 - 按发起人最新授权，开始M2，顺序完成M2-01至M2-07，每项独立测试/提交，最终验收后停下。
 - M2-01至M2-07均已实现、测试并独立提交；发起人于2026-11-11验收通过，方案制定者独立复核12组验收、129项后端测试及外部越权探测401。
-- M3-01至M3-13均已实现、通过各项验证并逐项提交；下一项为M3-15“平台辅助起草规范”，随后M3-14“审核报告页面”。按AGENTS.md每次完成一个任务，M3全阶段结束后实际运行验收脚本并停下等待验收。
+- M3-01至M3-13及M3-15均已实现、通过各项验证并逐项提交；下一项为M3-14“审核报告页面”。按AGENTS.md每次完成一个任务，M3全阶段结束后实际运行验收脚本并停下等待验收。
 
 ## M1-01：工程骨架（2026-11-10）
 
@@ -470,3 +470,19 @@ colima stop teams-m1
 - 最终隔离M3 Compose（18002）在全量测试和浏览器结束后串行构建共享镜像一次，`up --no-build --wait`成功；`0019_model_disclosure(head)`、Alembic无漂移、health ok，web/PG healthy、worker运行。159个源码、迁移、资源、锁文件及静态文件hash全部与工作区一致，web/worker镜像相同：`sha256:beddbe7f14eb1c64d543f2ec4b0a591cde2e4429d559f70d67d1330c2a5dfd11`。Compose始终显式`--env-file /dev/null`及隔离M3配置，`LLM_ENABLE_LIVE_CALLS=false`、容器Key为空；未修改其他环境配置或容器状态，共享VM资源故障及串行构建时再次发生的测试PG重启已单独记录，不影响构建前已完成的1609项测试结果。
 - 证据：`.verification/M3-13-pytest.log`、`M3-13-pytest-final.log`、`M3-13-disclosure.log`、`M3-13-admin-final.log`、`M3-13-pipeline-adaptation.log`、`M3-13-terms-verification.md`、`M3-13-resource-failure.md`、`M3-13-frontend-final.log`、`M3-13-build.log`、`M3-13-up.log`、`M3-13-build-final.log`、`M3-13-up-final.log`、`M3-13-container-summary.json/.md`、`M3-13-source-comparison.json`、`M3-13-wheel.log`、`M3-13-wheel-verification.json`、`M3-13-gate-isolation.log/.json`、`M3-13-browser.log`、`M3-13-browser-summary.json`、截图、测试CSV、`M3-13-browser-cleanup.json`及`M3-13-schema-cleanup.json`。验证产物均在忽略目录，不随Git提交。
 - 本轮仅完成M3-13；无新增待裁定问题。按计划下一项M3-15，再M3-14；M3最终里程碑验收尚未执行。真实DeepSeek调用0，所有自动化模型均用固定替身；没有读取、显示或提交`platform/.env`，真实Key仍由发起人保管并仅用于最终验收。所有改动只在platform内，独立提交后停下。
+
+## M3-15：平台辅助起草规范（2026-11-12）
+
+- 负责人在团队规范页填写1至6000字要求，平台使用固定版本`2026-11-12.1`的本地指令调用一次`spec_draft`模型。仅外发固定指令和带数据标记的要求描述，不附带既有草稿、方案、项目正文或模板目录。条目复用发布接口结构、字段长度及编号唯一性校验，拒绝额外字段、非法类别/检查方式、猜测的模板资源ID、超限及部分合格结果；模型或结构失败均不自动重试，不生成正式规范版本。
+- 合格条目追加到既有本地编辑区，保留人工未发布修改；编号冲突自动加唯一后缀并提示，总数超过500则整批不加入。负责人逐条修改后沿既有发布操作生成冻结版本。生成期间禁止重复操作、编辑、上传和发布；失败保留原草稿及要求，人工重试使用新UUID。项目、账号、负责人角色变化或卸载后隔离迟到响应，告知409只刷新告知并复位勾选，不清空本地修改。
+- 新增人类负责人专用`POST /api/projects/{project_id}/spec/draft`，要求CSRF及当前项目权限；普通组员、非成员、无项目管理员和智能体均无起草权限。HTTP Bearer同时携本人Cookie也拒绝并审计，MCP不暴露起草或发布工具。请求UUID全局唯一，同请求重复及并发不能再次外发。授权/请求留痕、预算准入及结果返回分别核验当前权限和告知；网络调用期间不持有认证事务、项目锁或数据库连接。迟到权限失效及结果事件失败不返回草稿，已发生用量保留。
+- 新增不可变`SpecDraftRequest`及迁移`0020_spec_drafting`，仅保存项目、实际发起人、要求SHA-256、告知版本、事件和时间，不保存要求或生成正文。模型账本增加独立起草来源，数据库约束交付审核来源和起草来源恰有一种、同起草来源最多一次调用；不伪造正式交付、审核任务或`ReviewAdmission`。存在起草用量时降级拒绝丢弃来源。生成及用量事件以`platform-spec-drafter`/`platform_spec_draft`留痕，另记实际发起人；活动和时间线显示“平台规范起草”。
+- 每次起草预算准入各占一个项目/平台日名额，与正式交付审核共用额度，沿UTC换日、token预留、实际结算及未知用量保守记账规则。额度0/不足在transport前拒绝；同份已获准正式审核仍能继续而不重复扣份。模型返回JSON后条目结构失败仍保留实际token与费用。管理员汇总及CSV按`spec_draft`计入项目、审核员和日期对账。
+- 数据外发告知扩充起草要求文字，版本升为`deepseek-2026-11-12.2`；原`.1`同意不自动升级，负责人须重新阅读并主动确认，勾选默认关闭。告知加载失败不阻断人工编辑与发布。部署说明见`deploy/SPEC_DRAFTING.md`，模型配置及告知用量文档同步更新，既有价格快照未改。
+- 新增**115项测试**：纯生成58项（58 passed in 0.07s），真实PG服务及HTTP/MCP集成57项（初始56项最终56 passed in 18.78s，补充混合额度1项1 passed in 0.54s）；覆盖一次调用、结构边界、提示数据隔离、角色/同意/CSRF、智能体含Cookie拒绝审计、重复与并发、最后额度竞争、网络无连接/锁、晚期权限及事件失败、来源不可变/XOR/唯一性、真实用量与CSV对账。既有模型/账本/告知/队列及管理员相关回归**165 passed in 44.77s**。最终完整后端**1724 passed in 265.78s，无跳过、无警告**；只读独立复核未发现必修问题。
+- 如实记录初期失败：集成首轮2 failed/54 passed，分别为测试JSON编码UUID未转换、底层TRUNCATE先被外键约束拒绝；已用正确序列化及CASCADE触达不可变守卫，修正后全部通过，未放宽产品保护。初期Ruff长行/导入及前端缺少新增accountId prop导致检查失败，修正后Ruff、全库209文件格式、依赖锁、前端vue-tsc及Vite生产构建均通过。浏览器初轮管理员断言误用cell而实际为rowheader，修正验证脚本后完整通过，无遗留失败。
+- Playwright按webapp-testing流程使用真实HTTP、独立PG schema及当前生产dist（18003，无worker，真实LLMClient配MockTransport）通过**7组流程**：明确同意后生成追加并保留人工修改/冲突编号、不合格结果一次调用且手动重试新ID、陈旧告知409保留草稿、人工修改并明确发布且旧版不变、平台起草时间线、成员只读无生成控件、无项目管理员用量对账。2次合格和1次结构失败共3条模型账本，合计450 token、估算`¥0.0015648000`；控制台错误0，截图已查看。临时服务正常关闭，fixture清理完成，唯一schema复查不存在。
+- wheel离线构建通过，全部128个Python和8个TOML资源共136文件与工作区逐字节一致，新起草指令及模块均入包。全量测试和浏览器结束后，隔离M3 Compose（18002）仅构建共享web/worker镜像一次，`up --no-build --wait`通过；迁移`0020_spec_drafting(head)`、Alembic无漂移、来源约束/触发器元数据正确，health ok，web/PG healthy、worker运行。166个源码、迁移、资源、锁及静态文件SHA-256全部匹配；共用镜像`sha256:b1a17ef2be2ed223fa6866991eb04f7540a08c33f91a359d23733416d8c8565d`。
+- 共享VM资源限制仍未消除：约2.83GiB内存，串行镜像构建期间测试PG于04:03:57.049及04:04:02.744 UTC两次checkpointer被SIGKILL，内核本轮新增global_oom确认其cgroup；分别于04:04:01.331、04:04:02.778恢复连接，04:04:14最终`pg_isready`及真实`SELECT 1`均通过。没有停止其他环境、重启测试PG或调整VM；故障发生于完整回归及浏览器结束之后，不改变已通过结果，但不能宣称串行构建根治OOM。证据保留在`M3-15-resource-failure.md`及构建前后快照。
+- 验证证据均在忽略目录`.verification/`：`M3-15-generation.log`、`M3-15-drafting-integration.log`、`M3-15-drafting-integration-final.log`、`M3-15-drafting-mixed-quota.log`、`M3-15-baseline.log`、`M3-15-pytest.log`、`M3-15-frontend-build.log`、`M3-15-browser-initial.log`、`M3-15-browser.log`、`M3-15-browser-summary.json`、截图、`M3-15-browser-cleanup.json`、`M3-15-schema-cleanup.json`、`M3-15-wheel.log`、`M3-15-wheel-verification.json`、`M3-15-build-final.log`、`M3-15-up-final.log`、`M3-15-container-summary.json/.md`、`M3-15-schema-metadata.json`及`M3-15-source-comparison.json`。
+- 本轮仅完成M3-15，独立提交后停下；下一项M3-14。全部改动只在platform内，无新增待裁定问题。Compose显式`--env-file /dev/null`，web/worker真实调用开关false、Key为空；本项真实模型调用0，没有读取、显示或提交`platform/.env`。M3最终真实DeepSeek验收尚未执行，仍留到M3-14完成后运行并等待发起人验收。

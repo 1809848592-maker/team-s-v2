@@ -5,6 +5,7 @@ export interface PlanContent { research_question:string; final_deliverable:strin
 export interface PlanVersion {id:string;project_id:string;version:number;change_note:string;content:PlanContent;published_by:string;published_at:string}
 export interface SpecItem {number:string; category:'writing'|'template'|'format'|'handoff';requirement:string;check_method:'program'|'ai'|'manual';positive_example:string;negative_example:string;template_resource_id:string|null}
 export interface SpecVersion {id:string;project_id:string;version:number;change_note:string;items:SpecItem[];published_by:string;published_at:string}
+export interface SpecDraftResult {items:SpecItem[];request_id:string;call_id:string;instruction_version:string}
 export interface Resource {id:string;filename:string;size:number;sha256:string;builtin:boolean;download_url:string}
 export interface PresetCatalog {presets:{key:string;name:string;items:SpecItem[]}[];templates:Resource[]}
 export interface Progress {id:string;project_id:string;module_id:string;user_id:string;stage:string;summary:string;plan_version_id:string;created_at:string;source:'human'|'agent';agent_id:string|null;agent_name:string|null}

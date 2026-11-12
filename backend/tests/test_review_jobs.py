@@ -21,6 +21,7 @@ from app.models.review_job import ReviewJob
 from app.services import draft_confirmation
 from app.services.deliveries import submit_delivery
 from app.services.delivery_states import transition_review
+from app.services.model_disclosure import DISCLOSURE_VERSION
 from app.services.review_jobs import claim_next, complete_job, fail_job, retry_job
 from app.storage import LocalStorage
 
@@ -144,7 +145,7 @@ def test_submission_queue_workflow_and_events_wait_for_caller_commit_and_rollbac
             UUID(team.member_id),
             "transaction.md",
             BytesIO(b"transactional queue bytes"),
-            {"ai_participation": "none", "disclosure_version": "deepseek-2026-11-12.1"},
+            {"ai_participation": "none", "disclosure_version": DISCLOSURE_VERSION},
             storage=LocalStorage(settings.storage_dir),
             max_bytes=settings.upload_max_bytes,
             commit=False,

@@ -30,6 +30,8 @@ def _human_action(request: Request) -> str:
         return "admin_usage"
     if route_path.endswith("/model-consent"):
         return "consent_model_data_transfer"
+    if route_path.endswith("/spec/draft"):
+        return "generate_spec_draft"
     if "/plan" in route_path.split("/projects/{project_id}")[-1]:
         return "publish_plan"
     if route_path.endswith("/spec/versions"):

@@ -18,6 +18,7 @@ from app.models.review_job import ReviewJob
 from app.models.review_report import ReviewAnnotation, ReviewFinding, ReviewReport, ReviewSummary
 from app.models.review_workflow import DeliveryStateTransition, DeliveryWorkflow
 from app.models.spec import SpecVersion
+from app.models.spec_draft import SpecDraftRequest
 
 __all__ = [
     "Agent",
@@ -54,5 +55,6 @@ __all__ = [
     "Resource",
     "SharedMaterial",
     "SpecVersion",
+    "SpecDraftRequest",
     "User",
 ]

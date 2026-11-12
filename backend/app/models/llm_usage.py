@@ -67,6 +67,11 @@ class ModelCall(Base):
     __tablename__ = "llm_model_calls"
     __table_args__ = (
         CheckConstraint(
+            "(admission_id IS NOT NULL AND spec_draft_request_id IS NULL) OR "
+            "(admission_id IS NULL AND spec_draft_request_id IS NOT NULL)",
+            name="ck_llm_model_calls_source",
+        ),
+        CheckConstraint(
             "status IN ('reserved', 'succeeded', 'failed', 'unknown')",
             name="ck_llm_model_calls_status",
         ),
@@ -91,8 +96,11 @@ class ModelCall(Base):
     )
 
     id: Mapped[UUID] = mapped_column(primary_key=True)
-    admission_id: Mapped[UUID] = mapped_column(
+    admission_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("llm_review_admissions.id", ondelete="RESTRICT")
+    )
+    spec_draft_request_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("spec_draft_requests.id", ondelete="RESTRICT"), unique=True
     )
     project_id: Mapped[UUID] = mapped_column(
         ForeignKey("projects.id", ondelete="RESTRICT"), index=True

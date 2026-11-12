@@ -24,6 +24,7 @@ from app.api.plans import router as plans_router
 from app.api.projects import router as projects_router
 from app.api.resources import router as resources_router
 from app.api.reviews import router as reviews_router
+from app.api.spec_drafting import router as spec_drafting_router
 from app.api.specs import router as specs_router
 from app.config import Settings, get_settings
 from app.mcp_auth import MCPAuthentication
@@ -68,6 +69,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(notifications_router, prefix="/api")
     app.include_router(resources_router, prefix="/api")
     app.include_router(specs_router, prefix="/api")
+    app.include_router(spec_drafting_router, prefix="/api")
     app.include_router(deliveries_router, prefix="/api")
     app.include_router(reviews_router, prefix="/api")
     app.include_router(final_reviews_router, prefix="/api")

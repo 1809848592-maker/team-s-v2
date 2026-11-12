@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, ref, useId, watch } from 'vue'
-import { api, dateText, errorText, projectPath, sizeText } from '../api/client'
-import type { PresetCatalog, Resource, SpecItem, SpecVersion } from '../api/types'
+import { computed, onBeforeUnmount, ref, useId, watch } from 'vue'
+import { ApiError, api, dateText, errorText, projectPath, sizeText } from '../api/client'
+import type { PresetCatalog, ProjectModelDisclosure, Resource, SpecDraftResult, SpecItem, SpecVersion } from '../api/types'
+import ModelDisclosureNotice from './ModelDisclosureNotice.vue'
 
-const props = defineProps<{ projectId: string; leader: boolean }>()
+const props = defineProps<{ projectId: string; accountId: string; leader: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const prefix = useId()
 const versions = ref<SpecVersion[]>([])
@@ -17,6 +18,13 @@ const error = ref('')
 const notice = ref('')
 const publishing = ref(false)
 const uploading = ref(false)
+const generating = ref(false)
+const description = ref('')
+const disclosure = ref<ProjectModelDisclosure | null>(null)
+const disclosureLoading = ref(false)
+const disclosureError = ref('')
+const consentChecked = ref(false)
+const consenting = ref(false)
 const changeNote = ref('')
 const uploadFile = ref<File | null>(null)
 const fileInput = ref<HTMLInputElement | null>(null)
@@ -24,6 +32,14 @@ type DraftItem = SpecItem & { editorId: string }
 const draft = ref<DraftItem[]>([])
 let itemSequence = 0
 let loadSequence = 0
+let disclosureSequence = 0
+let mounted = true
+
+const busy = computed(() => publishing.value || uploading.value || generating.value || consenting.value)
+function context() { return { projectId: props.projectId, accountId: props.accountId, sequence: loadSequence } }
+function currentContext(owner: ReturnType<typeof context>) {
+  return mounted && owner.projectId === props.projectId && owner.accountId === props.accountId && owner.sequence === loadSequence
+}
 
 const categories: Record<SpecItem['category'], string> = {
   writing: '文字规范', template: '模板使用', format: '格式要求', handoff: '交接规范',
@@ -47,7 +63,8 @@ function editable(item: SpecItem): DraftItem {
 }
 
 async function load() {
-  const sequence = ++loadSequence
+  ++loadSequence
+  const owner = context()
   loading.value = true
   loadError.value = ''
   error.value = ''
@@ -59,29 +76,109 @@ async function load() {
   selectedPresets.value = []
   selectedVersionId.value = ''
   changeNote.value = ''
+  description.value = ''
+  generating.value = false
+  publishing.value = false
+  uploading.value = false
+  consenting.value = false
+  disclosure.value = null
+  consentChecked.value = false
   uploadFile.value = null
   if (fileInput.value) fileInput.value.value = ''
   const path = projectPath(props.projectId)
+  void loadDisclosure()
   try {
     const [published, presets, files] = await Promise.all([
       api<SpecVersion[]>(`${path}/spec/versions`),
       api<PresetCatalog>(`${path}/spec/presets`),
       api<Resource[]>(`${path}/resources`),
     ])
-    if (sequence !== loadSequence) return
+    if (!currentContext(owner)) return
     versions.value = published.sort((a, b) => b.version - a.version)
     catalog.value = presets
     resources.value = files
     selectedVersionId.value = current.value?.id ?? ''
     draft.value = (current.value?.items ?? []).map(editable)
   } catch (cause) {
-    if (sequence === loadSequence) loadError.value = errorText(cause)
+    if (currentContext(owner)) loadError.value = errorText(cause)
   } finally {
-    if (sequence === loadSequence) loading.value = false
+    if (currentContext(owner)) loading.value = false
   }
 }
 
-watch(() => props.projectId, load, { immediate: true })
+watch(() => [props.projectId, props.accountId, props.leader], load, { immediate: true })
+onBeforeUnmount(() => { mounted = false; ++loadSequence; ++disclosureSequence })
+
+async function loadDisclosure() {
+  const owner = context(), sequence = ++disclosureSequence
+  disclosureLoading.value = true
+  disclosureError.value = ''
+  disclosure.value = null
+  consentChecked.value = false
+  try {
+    const result = await api<ProjectModelDisclosure>(`${projectPath(owner.projectId)}/model-disclosure`)
+    if (currentContext(owner) && sequence === disclosureSequence) disclosure.value = result
+  } catch (cause) {
+    if (currentContext(owner) && sequence === disclosureSequence) disclosureError.value = errorText(cause)
+  } finally {
+    if (currentContext(owner) && sequence === disclosureSequence) disclosureLoading.value = false
+  }
+}
+
+async function acceptModelConsent() {
+  if (!props.leader || busy.value || loading.value || !consentChecked.value || !disclosure.value?.can_consent) return
+  const owner = context(), version = disclosure.value.notice.version
+  consenting.value = true
+  error.value = ''; notice.value = ''
+  try {
+    const result = await api<ProjectModelDisclosure>(`${projectPath(owner.projectId)}/model-consent`, { disclosure_version: version })
+    if (!currentContext(owner)) return
+    disclosure.value = result
+    consentChecked.value = false
+    notice.value = '负责人知情同意已记录，可以辅助起草规范。'
+    emit('changed')
+  } catch (cause) {
+    if (!currentContext(owner)) return
+    error.value = errorText(cause)
+    if (cause instanceof ApiError && cause.status === 409) await loadDisclosure()
+  } finally {
+    if (currentContext(owner)) consenting.value = false
+  }
+}
+
+async function generateDraft() {
+  if (!props.leader || busy.value || loading.value || disclosureLoading.value || !disclosure.value?.project_consent || !description.value.trim() || draft.value.length >= 500) return
+  const owner = context(), version = disclosure.value.notice.version
+  generating.value = true
+  error.value = ''; notice.value = ''
+  try {
+    const result = await api<SpecDraftResult>(`${projectPath(owner.projectId)}/spec/draft`, {
+      description: description.value.trim(), request_id: crypto.randomUUID(), disclosure_version: version,
+    })
+    if (!currentContext(owner)) return
+    if (!result.items.length || draft.value.length + result.items.length > 500) {
+      error.value = '生成的条目无法完整加入：一版规范最多 500 条。原草稿已保留，请减少草稿条目后重新生成。'
+      return
+    }
+    const used = new Set(draft.value.map(item => item.number.trim()))
+    let renamed = 0
+    const additions = result.items.map(item => {
+      const number = uniqueNumber(item.number, used)
+      if (number !== item.number) ++renamed
+      used.add(number)
+      return editable({ ...item, number })
+    })
+    draft.value.push(...additions)
+    notice.value = `已将 ${additions.length} 条模型建议加入草稿，尚未发布。${renamed ? `其中 ${renamed} 条编号与原草稿重复，已添加后缀。` : ''}请逐条核对、修改后手动发布。`
+    emit('changed')
+  } catch (cause) {
+    if (!currentContext(owner)) return
+    error.value = `${errorText(cause)} 原草稿和要求描述已保留。`
+    if (cause instanceof ApiError && cause.status === 409) await loadDisclosure()
+  } finally {
+    if (currentContext(owner)) generating.value = false
+  }
+}
 
 function uniqueNumber(proposed: string, used: Set<string>): string {
   if (!used.has(proposed)) return proposed
@@ -91,7 +188,7 @@ function uniqueNumber(proposed: string, used: Set<string>): string {
 }
 
 function addPresets() {
-  if (!props.leader || publishing.value) return
+  if (!props.leader || busy.value) return
   const additions = catalog.value.presets
     .filter(item => selectedPresets.value.includes(item.key))
     .flatMap(item => item.items)
@@ -112,7 +209,7 @@ function addPresets() {
 }
 
 function addItem() {
-  if (!props.leader || publishing.value || draft.value.length >= 500) return
+  if (!props.leader || busy.value || draft.value.length >= 500) return
   const number = uniqueNumber('SPEC-01', new Set(draft.value.map(item => item.number.trim())))
   draft.value.push(editable({
     number, category: 'writing', requirement: '', check_method: 'manual',
@@ -121,11 +218,11 @@ function addItem() {
 }
 
 function removeItem(index: number) {
-  if (props.leader && !publishing.value) draft.value.splice(index, 1)
+  if (props.leader && !busy.value) draft.value.splice(index, 1)
 }
 
 async function publish() {
-  if (!props.leader || publishing.value) return
+  if (!props.leader || busy.value) return
   error.value = ''
   notice.value = ''
   const items: SpecItem[] = draft.value.map(({ editorId: _editorId, ...item }) => ({
@@ -144,12 +241,12 @@ async function publish() {
     return
   }
   publishing.value = true
-  const projectId = props.projectId
+  const owner = context(), projectId = owner.projectId
   try {
     const published = await api<SpecVersion>(`${projectPath(projectId)}/spec/versions`, {
       change_note: changeNote.value.trim(), items,
     })
-    if (projectId !== props.projectId) return
+    if (!currentContext(owner)) return
     versions.value = [published, ...versions.value.filter(item => item.id !== published.id)]
       .sort((a, b) => b.version - a.version)
     selectedVersionId.value = published.id
@@ -158,9 +255,9 @@ async function publish() {
     notice.value = `规范 v${published.version} 已发布并冻结。后续修改将发布为新版本。`
     emit('changed')
   } catch (cause) {
-    if (projectId === props.projectId) error.value = errorText(cause)
+    if (currentContext(owner)) error.value = errorText(cause)
   } finally {
-    publishing.value = false
+    if (currentContext(owner)) publishing.value = false
   }
 }
 
@@ -169,16 +266,16 @@ function selectFile(event: Event) {
 }
 
 async function upload() {
-  if (!props.leader || !uploadFile.value || uploading.value) return
+  if (!props.leader || !uploadFile.value || busy.value) return
   error.value = ''
   notice.value = ''
   uploading.value = true
-  const projectId = props.projectId
+  const owner = context(), projectId = owner.projectId
   const form = new FormData()
   form.append('file', uploadFile.value)
   try {
     const resource = await api<Resource>(`${projectPath(projectId)}/resources`, form)
-    if (projectId !== props.projectId) return
+    if (!currentContext(owner)) return
     resources.value = [resource, ...resources.value.filter(item => item.id !== resource.id)]
     uploadFile.value = null
     if (fileInput.value) fileInput.value.value = ''
@@ -186,14 +283,14 @@ async function upload() {
     emit('changed')
     try {
       const refreshed = await api<Resource[]>(`${projectPath(projectId)}/resources`)
-      if (projectId === props.projectId) resources.value = refreshed
+      if (currentContext(owner)) resources.value = refreshed
     } catch (cause) {
-      if (projectId === props.projectId) error.value = `模板已上传，列表刷新失败：${errorText(cause)}`
+      if (currentContext(owner)) error.value = `模板已上传，列表刷新失败：${errorText(cause)}`
     }
   } catch (cause) {
-    if (projectId === props.projectId) error.value = errorText(cause)
+    if (currentContext(owner)) error.value = errorText(cause)
   } finally {
-    uploading.value = false
+    if (currentContext(owner)) uploading.value = false
   }
 }
 </script>
@@ -266,7 +363,32 @@ async function upload() {
           <span class="tag">未发布草稿</span>
         </div>
 
-        <fieldset class="preset-fieldset" :disabled="publishing">
+        <section class="spec-assistant" :aria-labelledby="`${prefix}-assistant-title`" data-spec-assistant>
+          <h3 :id="`${prefix}-assistant-title`">平台辅助起草</h3>
+          <p class="muted">描述你的要求，生成条目后逐条核对、修改，再手动发布。每次生成调用一次模型，计入项目额度和用量；本次只发送下方要求描述。</p>
+          <p v-if="disclosureLoading" class="muted" role="status">正在读取数据外发告知…</p>
+          <p v-if="disclosureError" class="error" role="alert">{{ disclosureError }} <button class="btn quiet" type="button" :disabled="busy || disclosureLoading" @click="loadDisclosure">重试告知</button></p>
+          <template v-if="disclosure">
+            <ModelDisclosureNotice :notice="disclosure.notice" compact/>
+            <p v-if="disclosure.project_consent" class="muted">项目负责人已于 {{ dateText(disclosure.project_consent.accepted_at) }} 确认本版数据外发告知。</p>
+            <template v-else>
+              <p class="muted">本项目尚未同意当前数据外发告知，辅助起草暂未启用。人工编辑和发布规范仍可使用。</p>
+              <form v-if="disclosure.can_consent" class="assistant-consent" @submit.prevent="acceptModelConsent">
+                <label class="consent-checkbox"><input v-model="consentChecked" type="checkbox" :disabled="busy">我已阅读并同意向 DeepSeek 外发审核及规范起草数据。</label>
+                <button class="btn" :disabled="busy || !consentChecked">{{ consenting ? '正在记录…' : '确认知情同意' }}</button>
+              </form>
+            </template>
+          </template>
+          <form class="stack assistant-form" @submit.prevent="generateDraft">
+            <div class="field">
+              <label :for="`${prefix}-draft-description`">描述规范要求</label>
+              <textarea :id="`${prefix}-draft-description`" v-model="description" rows="4" required maxlength="6000" :disabled="busy" placeholder="例如：用客观、简洁的中文写研究汇报；缩写首次出现写全称；交接时附数据来源和未解决事项。" data-spec-description/>
+            </div>
+            <div class="toolbar"><button class="btn" :disabled="busy || disclosureLoading || !disclosure?.project_consent || !description.trim() || draft.length >= 500" data-spec-generate>{{ generating ? '正在起草…' : '生成条目草稿' }}</button><span class="muted">生成结果加入现有草稿，不自动发布；失败后可手动重试。</span></div>
+          </form>
+        </section>
+
+        <fieldset class="preset-fieldset" :disabled="busy">
           <legend>选择范例</legend>
           <div class="preset-grid">
             <label v-for="preset in catalog.presets" :key="preset.key" :for="`${prefix}-preset-${preset.key}`" class="preset-option">
@@ -274,12 +396,12 @@ async function upload() {
               <span><strong>{{ preset.name }}</strong><small>{{ preset.items.length }} 条 · 可修改</small></span>
             </label>
           </div>
-          <button class="btn quiet" type="button" :disabled="!selectedPresets.length || publishing" @click="addPresets">将所选范例加入草稿</button>
+          <button class="btn quiet" type="button" :disabled="!selectedPresets.length || busy" @click="addPresets">将所选范例加入草稿</button>
         </fieldset>
 
         <form class="stack draft-form" @submit.prevent="publish">
           <p v-if="!draft.length" class="empty">草稿中还没有条目。可加入范例，也可添加自己的规范。</p>
-          <fieldset v-for="(item, index) in draft" :key="item.editorId" class="item-editor" :disabled="publishing">
+          <fieldset v-for="(item, index) in draft" :key="item.editorId" class="item-editor" :disabled="busy">
             <legend>条目 {{ index + 1 }}</legend>
             <div class="form-grid">
               <div class="field">
@@ -326,15 +448,15 @@ async function upload() {
             </div>
           </fieldset>
           <div class="toolbar">
-            <button class="btn quiet" type="button" :disabled="publishing || draft.length >= 500" @click="addItem">添加条目</button>
+            <button class="btn quiet" type="button" :disabled="busy || draft.length >= 500" @click="addItem">添加条目</button>
             <span class="muted">{{ draft.length }} / 500 条</span>
           </div>
           <div class="field">
             <label :for="`${prefix}-change-note`">本次变更说明</label>
-            <textarea :id="`${prefix}-change-note`" v-model="changeNote" rows="2" required maxlength="2000" :disabled="publishing" placeholder="说明本版新增或修改了哪些要求" />
+            <textarea :id="`${prefix}-change-note`" v-model="changeNote" rows="2" required maxlength="2000" :disabled="busy" placeholder="说明本版新增或修改了哪些要求" />
           </div>
           <div class="toolbar">
-            <button class="btn primary" type="submit" :disabled="publishing || !draft.length">{{ publishing ? '正在发布…' : '发布规范新版本' }}</button>
+            <button class="btn primary" type="submit" :disabled="busy || !draft.length">{{ publishing ? '正在发布…' : '发布规范新版本' }}</button>
             <span class="muted">发布后保留冻结快照，后续修改需发布新版本。</span>
           </div>
         </form>
@@ -361,8 +483,8 @@ async function upload() {
           </div>
         </div>
         <form v-if="leader" class="upload-form" @submit.prevent="upload">
-          <div class="field"><label :for="`${prefix}-file`">上传自有模板</label><input :id="`${prefix}-file`" ref="fileInput" type="file" required :disabled="uploading" @change="selectFile"></div>
-          <button class="btn" type="submit" :disabled="!uploadFile || uploading">{{ uploading ? '正在上传…' : '上传模板' }}</button>
+          <div class="field"><label :for="`${prefix}-file`">上传自有模板</label><input :id="`${prefix}-file`" ref="fileInput" type="file" required :disabled="busy" @change="selectFile"></div>
+          <button class="btn" type="submit" :disabled="!uploadFile || busy">{{ uploading ? '正在上传…' : '上传模板' }}</button>
         </form>
       </section>
     </template>
@@ -392,6 +514,12 @@ async function upload() {
 .preset-option strong { font-size: .9rem; font-weight: 500; }
 .preset-option small { display: block; margin-top: .3rem; color: #627184; }
 .draft-form { margin-top: 1rem; }
+.spec-assistant { display: grid; gap: 1rem; margin-top: 1.5rem; padding: 1.2rem; border: 1px solid #dce3eb; border-left: 3px solid #28746c; border-radius: 6px; }
+.spec-assistant p { margin: 0; line-height: 1.75; }
+.assistant-consent { display: flex; align-items: center; gap: 1rem; flex-wrap: wrap; }
+.consent-checkbox { display: flex; align-items: flex-start; gap: .5rem; font-size: .85rem; line-height: 1.75; }
+.consent-checkbox input { flex-shrink: 0; margin-top: .35rem; }
+.assistant-form .toolbar { justify-content: flex-start; }
 .item-editor { display: grid; gap: 1rem; margin: 0; }
 .item-actions { justify-content: flex-end; }
 .item-actions a { margin-right: auto; }

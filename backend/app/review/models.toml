@@ -77,7 +77,7 @@ output = "27"
 effective_date = "2026-11-11"
 estimate_basis = "peak_ceiling"
 
-# 只预留模型选择；规范辅助起草调用由M3-15实现。
+# 负责人单次规范辅助起草，与交付审核共用平台/项目额度及用量账本。
 [reviewers.spec_draft]
 model = "deepseek-flash"
 base_url = "https://api.deepseek.com"
