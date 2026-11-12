@@ -55,8 +55,7 @@ class ReviewAdmission(Base):
     __table_args__ = (
         CheckConstraint("call_count >= 0", name="ck_llm_review_admissions_calls"),
         CheckConstraint(
-            "(job_id IS NOT NULL AND project_linkage_review_id IS NULL) OR "
-            "(job_id IS NULL AND project_linkage_review_id IS NOT NULL)",
+            "num_nonnulls(job_id, project_linkage_review_id, plan_self_check_request_id) = 1",
             name="ck_llm_review_admissions_source",
         ),
     )
@@ -67,6 +66,9 @@ class ReviewAdmission(Base):
     )
     project_linkage_review_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("project_linkage_reviews.id", ondelete="RESTRICT"), unique=True
+    )
+    plan_self_check_request_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("plan_self_check_requests.id", ondelete="RESTRICT"), unique=True
     )
     project_id: Mapped[UUID] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"))
     day: Mapped[date] = mapped_column(Date)

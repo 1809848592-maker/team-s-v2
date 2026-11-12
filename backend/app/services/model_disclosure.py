@@ -11,7 +11,7 @@ from app.models import DeliveryVersion, Project, ProjectMember
 from app.models.model_disclosure import ProjectModelConsent, SubmissionDisclosure
 from app.services.projects import ProjectNotFoundError, require_member
 
-DISCLOSURE_VERSION = "deepseek-2026-11-12.3"
+DISCLOSURE_VERSION = "deepseek-2026-11-12.4"
 
 
 class DisclosureVersionError(ValueError):
@@ -31,6 +31,7 @@ def notice() -> dict:
             "AI 审核会将交付提取文本、相关方案和规范、意见处理历史及所需上游交付摘要"
             "发送给 DeepSeek（杭州深度求索人工智能基础技术研究有限公司）。"
             "完整衔接审核会发送项目各模块已采用交付的提取文本、交接说明及摘要。"
+            "方案自检会发送负责人当前编辑的未发布方案和分工草稿。"
             "辅助起草规范时，会将负责人填写的起草要求文字发送给 DeepSeek。"
             "文献核查还会向 Crossref、OpenAlex 发送参考文献的题名、作者、年份或 DOI。"
         ),

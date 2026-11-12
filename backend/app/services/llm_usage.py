@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.events import record_event
 from app.models.delivery import DeliveryVersion
 from app.models.llm_usage import DailyBudget, LLMProjectPolicy, ModelCall, ReviewAdmission
+from app.models.plan_self_check import PlanSelfCheckRequest
 from app.models.project_linkage import ProjectLinkageReview
 from app.models.review_job import ReviewJob
 from app.models.spec_draft import SpecDraftRequest
@@ -75,6 +76,28 @@ def _budget(db, scope, day):
 
 def _event(db, call, job_id, event_type):
     admission = db.get(ReviewAdmission, call.admission_id) if call.admission_id else None
+    if admission is not None and admission.plan_self_check_request_id is not None:
+        source = db.get(PlanSelfCheckRequest, admission.plan_self_check_request_id)
+        record_event(
+            db,
+            project_id=call.project_id,
+            actor_type="agent",
+            actor_id="platform-plan-self-checker",
+            event_type=event_type,
+            object_type="plan_self_check_request",
+            object_id=source.id,
+            details={
+                "execution_origin": "platform_plan_self_check",
+                "initiated_by": str(source.requested_by),
+                "request_id": str(source.id),
+                "call_id": str(call.id),
+                "reviewer": call.reviewer,
+                "model": call.model,
+                "status": call.status,
+                "error_code": call.error_code,
+            },
+        )
+        return
     if admission is not None and admission.project_linkage_review_id is not None:
         source = db.get(ProjectLinkageReview, admission.project_linkage_review_id)
         record_event(
@@ -163,6 +186,7 @@ def reserve_call(
     spec_draft_request_id: UUID | None = None,
     project_linkage_review_id: UUID | None = None,
     project_linkage_claim_token: UUID | None = None,
+    plan_self_check_request_id: UUID | None = None,
 ) -> UUID:
     limits = limits or QuotaLimits()
     if (
@@ -170,9 +194,18 @@ def reserve_call(
         or not isinstance(call_id, UUID)
         or sum(
             source is not None
-            for source in (job_id, spec_draft_request_id, project_linkage_review_id)
+            for source in (
+                job_id,
+                spec_draft_request_id,
+                project_linkage_review_id,
+                plan_self_check_request_id,
+            )
         )
         != 1
+        or (
+            plan_self_check_request_id is not None
+            and not isinstance(plan_self_check_request_id, UUID)
+        )
         or (job_id is not None and not isinstance(job_id, UUID))
         or (spec_draft_request_id is not None and not isinstance(spec_draft_request_id, UUID))
         or (
@@ -228,6 +261,26 @@ def reserve_call(
                 ):
                     raise LLMUsageError("项目完整衔接审核来源或租约无效")
                 require_member(db, project_id, project_source.requested_by, leader=True)
+            elif plan_self_check_request_id is not None:
+                from app.models import Project
+                from app.services.projects import require_member
+
+                db.scalar(
+                    select(Project.id).where(Project.id == project_id).with_for_update(read=True)
+                )
+                source = db.get(PlanSelfCheckRequest, plan_self_check_request_id)
+                if (
+                    source is None
+                    or source.project_id != project_id
+                    or reviewer != "plan_self_check"
+                    or call_id not in {uuid5(source.id, "initial"), uuid5(source.id, "repair")}
+                ):
+                    raise LLMUsageError("方案自检调用来源无效")
+                require_member(db, project_id, source.requested_by, leader=True)
+                if source.disclosure_version != model_disclosure.DISCLOSURE_VERSION:
+                    raise model_disclosure.DisclosureVersionError(
+                        "数据外发告知已更新，请重新阅读后重试"
+                    )
             elif spec_draft_request_id is not None:
                 from app.models import Project
                 from app.services.projects import require_member
@@ -245,7 +298,7 @@ def reserve_call(
                         "数据外发告知已更新，请重新阅读后重试"
                     )
             else:
-                if reviewer in {"project_summary", "project_linkage"}:
+                if reviewer in {"project_summary", "project_linkage", "plan_self_check"}:
                     raise LLMUsageError("项目审核员只能用于项目完整衔接审核")
                 job = db.scalar(
                     select(ReviewJob)
@@ -292,11 +345,16 @@ def reserve_call(
                     .where(
                         ReviewAdmission.job_id == job_id
                         if job_id is not None
+                        else ReviewAdmission.plan_self_check_request_id
+                        == plan_self_check_request_id
+                        if plan_self_check_request_id is not None
                         else ReviewAdmission.project_linkage_review_id == project_linkage_review_id
                     )
                     .with_for_update()
                 )
-                if job_id is not None or project_linkage_review_id is not None
+                if job_id is not None
+                or project_linkage_review_id is not None
+                or plan_self_check_request_id is not None
                 else None
             )
             if admission is None:
@@ -304,7 +362,10 @@ def reserve_call(
                     raise QuotaExceededError("project_reviews", retry_at)
                 if global_budget.review_count >= limits.platform_daily_reviews:
                     raise QuotaExceededError("platform_reviews", retry_at)
-            elif admission.call_count >= limits.max_calls_per_review:
+            elif admission.call_count >= min(
+                limits.max_calls_per_review,
+                2 if plan_self_check_request_id is not None else limits.max_calls_per_review,
+            ):
                 raise LLMCallLimitError("单次审核模型调用次数已达上限，审核未完成")
             if (
                 global_budget.reserved_tokens + global_budget.charged_tokens + reserved_tokens
@@ -315,10 +376,15 @@ def reserve_call(
             if project_source is not None and project_source.lease_until <= _now(db):
                 raise LLMUsageError("项目完整衔接审核租约已到期")
             if admission is None:
-                if job_id is not None or project_linkage_review_id is not None:
+                if (
+                    job_id is not None
+                    or project_linkage_review_id is not None
+                    or plan_self_check_request_id is not None
+                ):
                     admission = ReviewAdmission(
                         job_id=job_id,
                         project_linkage_review_id=project_linkage_review_id,
+                        plan_self_check_request_id=plan_self_check_request_id,
                         project_id=project_id,
                         day=day,
                     )

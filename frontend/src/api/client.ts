@@ -47,3 +47,6 @@ export function isPlatformReviewWorker(event: ProjectEvent): boolean { return ev
 export const projectLinkageEventLabels: Record<string, string> = {project_linkage_requested:'发起完整衔接审核',project_linkage_claimed:'开始完整衔接审核',project_linkage_completed:'完成完整衔接审核',project_linkage_failed:'完整衔接审核未完成',project_linkage_lease_expired:'完整衔接审核执行中断',project_linkage_retry_scheduled:'安排完整衔接审核重试',project_linkage_request_created:'将衔接审核意见转为协作需求'}
 export function isProjectLinkageWorker(event: ProjectEvent): boolean { return event.actor_type === 'agent' && event.actor_id === 'platform-project-linkage-worker' && event.represented_user_id === null && event.details.execution_origin === 'platform_project_linkage' }
 export function sizeText(size: number): string { return size < 1024 ? `${size} B` : size < 1048576 ? `${(size/1024).toFixed(1)} KB` : `${(size/1048576).toFixed(1)} MB` }
+
+export const planSelfCheckEventLabels: Record<string, string> = {plan_self_check_requested:'发起方案自检',plan_self_check_finished:'完成方案自检处理'}
+export function isPlanSelfCheckWorker(event: ProjectEvent): boolean { return event.actor_type === 'agent' && event.actor_id === 'platform-plan-self-checker' && event.represented_user_id === null && event.details.execution_origin === 'platform_plan_self_check' }

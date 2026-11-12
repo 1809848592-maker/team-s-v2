@@ -21,6 +21,7 @@ from app.api.health import router as health_router
 from app.api.model_disclosure import router as model_disclosure_router
 from app.api.modules import router as modules_router
 from app.api.notifications import router as notifications_router
+from app.api.plan_self_check import router as plan_self_check_router
 from app.api.plans import router as plans_router
 from app.api.project_linkage import router as project_linkage_router
 from app.api.projects import router as projects_router
@@ -67,6 +68,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(agent_http_router, prefix="/api")
     app.include_router(projects_router, prefix="/api")
     app.include_router(project_linkage_router, prefix="/api")
+    app.include_router(plan_self_check_router, prefix="/api")
     app.include_router(events_router, prefix="/api")
     app.include_router(plans_router, prefix="/api")
     app.include_router(modules_router, prefix="/api")

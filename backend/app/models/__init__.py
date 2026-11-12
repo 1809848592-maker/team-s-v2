@@ -11,6 +11,7 @@ from app.models.model_disclosure import ProjectModelConsent, SubmissionDisclosur
 from app.models.module import Module
 from app.models.notification import Notification
 from app.models.plan import PlanVersion
+from app.models.plan_self_check import PlanSelfCheckRequest
 from app.models.project import Invitation, Project, ProjectMember
 from app.models.project_linkage import (
     ProjectLinkageRequest,
@@ -51,6 +52,7 @@ __all__ = [
     "Module",
     "Notification",
     "PlanVersion",
+    "PlanSelfCheckRequest",
     "Project",
     "ProjectModelConsent",
     "SubmissionDisclosure",

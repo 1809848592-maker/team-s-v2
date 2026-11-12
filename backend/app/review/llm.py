@@ -185,6 +185,7 @@ class LLMClient:
         spec_draft_request_id: UUID | None = None,
         project_linkage_review_id: UUID | None = None,
         project_linkage_claim_token: UUID | None = None,
+        plan_self_check_request_id: UUID | None = None,
     ) -> dict:
         mock = isinstance(self._transport, httpx2.MockTransport)
         if not self._live_enabled and not mock:
@@ -202,9 +203,18 @@ class LLMClient:
             not isinstance(project_id, UUID)
             or sum(
                 source is not None
-                for source in (job_id, spec_draft_request_id, project_linkage_review_id)
+                for source in (
+                    job_id,
+                    spec_draft_request_id,
+                    project_linkage_review_id,
+                    plan_self_check_request_id,
+                )
             )
             != 1
+            or (
+                plan_self_check_request_id is not None
+                and not isinstance(plan_self_check_request_id, UUID)
+            )
             or (job_id is not None and not isinstance(job_id, UUID))
             or (spec_draft_request_id is not None and not isinstance(spec_draft_request_id, UUID))
             or (
@@ -261,6 +271,8 @@ class LLMClient:
                 "project_linkage_review_id": project_linkage_review_id,
                 "project_linkage_claim_token": project_linkage_claim_token,
             }
+        if plan_self_check_request_id is not None:
+            source = {"plan_self_check_request_id": plan_self_check_request_id}
         usage_service.reserve_call(
             self._sessions,
             project_id=project_id,

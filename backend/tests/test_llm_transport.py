@@ -109,6 +109,7 @@ def test_defaults_are_frozen_secret_free_and_only_enable_deepseek():
         "spec_draft",
         "project_summary",
         "project_linkage",
+        "plan_self_check",
     }
     for name in (
         "spec_compliance",
@@ -124,7 +125,7 @@ def test_defaults_are_frozen_secret_free_and_only_enable_deepseek():
             4096,
         )
         assert profile.prices.input_cache_hit == Decimal("0.04")
-    for name in ("logic", "linkage", "project_linkage"):
+    for name in ("logic", "linkage", "project_linkage", "plan_self_check"):
         profile = configuration.reviewers[name]
         assert (profile.model, profile.thinking, profile.max_tokens) == (
             "deepseek-v4-pro",

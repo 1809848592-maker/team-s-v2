@@ -3,8 +3,9 @@ import { computed, onMounted, ref, useId } from 'vue'
 import { api, dateText, errorText, localDate, projectPath, utcDate } from '../api/client'
 import type { Member, Module, PlanContent, PlanVersion } from '../api/types'
 import DependencyGraph from './DependencyGraph.vue'
+import PlanSelfCheck from './PlanSelfCheck.vue'
 
-const props = defineProps<{ projectId: string; members: Member[]; leader: boolean }>()
+const props = defineProps<{ projectId: string; accountId: string; members: Member[]; leader: boolean }>()
 const emit = defineEmits<{ changed: [] }>()
 const prefix = `plan-${useId().replace(/:/g, '')}`
 const versions = ref<PlanVersion[]>([])
@@ -23,6 +24,13 @@ const formats: { value: Module['delivery_format']; label: string }[] = [
   { value: 'pdf', label: 'PDF' }, { value: 'md', label: 'Markdown（md）' }, { value: 'other', label: '其他' },
 ]
 const graphModules = computed(() => editing.value && draft.value ? draft.value.modules : selected.value?.content.modules ?? [])
+const selfCheckContent = computed(() => {
+  if (!draft.value) return null
+  const content = copyContent(draft.value)
+  content.deadline = utcDate(content.deadline ?? '')
+  content.modules.forEach(module => { module.deadline = utcDate(module.deadline ?? ''); delete module.plan_version_id })
+  return content
+})
 
 function copyContent(content: PlanContent): PlanContent { return JSON.parse(JSON.stringify(content)) as PlanContent }
 function memberName(id: string): string { return props.members.find(member => member.user_id === id)?.username ?? id }
@@ -153,6 +161,7 @@ onMounted(loadVersions)
 
     <form v-if="editing && draft && leader" class="stack plan-editor" @submit.prevent="publish">
       <p class="notice">草稿尚未发布。查看历史版本会保留草稿；离开此页面前请完成发布。</p>
+      <PlanSelfCheck v-if="selfCheckContent" :project-id="projectId" :account-id="accountId" :leader="leader" :content="selfCheckContent" />
       <fieldset :disabled="publishing">
         <legend>整体方案</legend>
         <div class="form-grid">

@@ -10,7 +10,8 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test:linkage": "node tests/project-linkage.mjs"
+    "test:linkage": "node tests/project-linkage.mjs",
+    "test:plan-self-check": "node tests/plan-self-check.mjs"
   },
   "dependencies": {
     "element-plus": "2.14.8",
