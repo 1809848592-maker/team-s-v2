@@ -32,6 +32,8 @@ def _human_action(request: Request) -> str:
         return "consent_model_data_transfer"
     if route_path.endswith("/spec/draft"):
         return "generate_spec_draft"
+    if "/linkage-reviews" in route_path:
+        return "project_linkage_review"
     if "/plan" in route_path.split("/projects/{project_id}")[-1]:
         return "publish_plan"
     if route_path.endswith("/spec/versions"):

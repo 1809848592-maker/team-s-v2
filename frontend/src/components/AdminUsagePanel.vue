@@ -11,7 +11,7 @@ const report = ref<AdminUsage | null>(null), projects = ref<AdminProject[]>([])
 const loading = ref(false), error = ref(''), actionError = ref(''), notice = ref(''), exporting = ref(false)
 const savingId = ref(''), limits = ref<Record<string, string>>({})
 let sequence = 0, mounted = true
-const reviewers: Record<string, string> = {spec_compliance:'规范审核',citation_extract:'参考文献抽取',citation_alignment:'引用对应检查',logic:'逻辑审核',linkage:'衔接轻检',spec_draft:'规范辅助起草'}
+const reviewers: Record<string, string> = {spec_compliance:'规范审核',citation_extract:'参考文献抽取',citation_alignment:'引用对应检查',logic:'逻辑审核',linkage:'衔接轻检',spec_draft:'规范辅助起草',project_summary:'项目模块摘要',project_linkage:'完整衔接审核'}
 function number(value: number) { return value.toLocaleString('zh-CN') }
 function query() {
   const first = Date.parse(`${start.value}T00:00:00Z`), last = Date.parse(`${end.value}T00:00:00Z`)

@@ -92,3 +92,34 @@ input_cache_miss = "2"
 output = "8"
 effective_date = "2026-11-11"
 estimate_basis = "peak_ceiling"
+
+# 项目完整衔接审核：先低成本逐模块摘要，再以推理模型整体比对。
+[reviewers.project_summary]
+model = "deepseek-flash"
+base_url = "https://api.deepseek.com"
+key_env = "DEEPSEEK_API_KEY"
+thinking = false
+max_tokens = 4096
+timeout_seconds = 60
+[reviewers.project_summary.prices]
+currency = "CNY"
+input_cache_hit = "0.04"
+input_cache_miss = "2"
+output = "8"
+effective_date = "2026-11-11"
+estimate_basis = "peak_ceiling"
+
+[reviewers.project_linkage]
+model = "deepseek-v4-pro"
+base_url = "https://api.deepseek.com"
+key_env = "DEEPSEEK_API_KEY"
+thinking = true
+max_tokens = 16384
+timeout_seconds = 120
+[reviewers.project_linkage.prices]
+currency = "CNY"
+input_cache_hit = "0.30"
+input_cache_miss = "9"
+output = "27"
+effective_date = "2026-11-11"
+estimate_basis = "peak_ceiling"

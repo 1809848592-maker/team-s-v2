@@ -12,6 +12,11 @@ from app.models.module import Module
 from app.models.notification import Notification
 from app.models.plan import PlanVersion
 from app.models.project import Invitation, Project, ProjectMember
+from app.models.project_linkage import (
+    ProjectLinkageRequest,
+    ProjectLinkageResult,
+    ProjectLinkageReview,
+)
 from app.models.resource import Resource
 from app.models.resubmission import DeliveryResubmissionRequest
 from app.models.review_job import ReviewJob
@@ -50,6 +55,9 @@ __all__ = [
     "ProjectModelConsent",
     "SubmissionDisclosure",
     "ProjectMember",
+    "ProjectLinkageReview",
+    "ProjectLinkageResult",
+    "ProjectLinkageRequest",
     "ProgressReport",
     "RequestMessage",
     "Resource",

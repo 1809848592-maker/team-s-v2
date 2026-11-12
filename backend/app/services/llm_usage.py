@@ -12,6 +12,7 @@ from sqlalchemy.dialects.postgresql import insert
 from app.events import record_event
 from app.models.delivery import DeliveryVersion
 from app.models.llm_usage import DailyBudget, LLMProjectPolicy, ModelCall, ReviewAdmission
+from app.models.project_linkage import ProjectLinkageReview
 from app.models.review_job import ReviewJob
 from app.models.spec_draft import SpecDraftRequest
 
@@ -73,6 +74,31 @@ def _budget(db, scope, day):
 
 
 def _event(db, call, job_id, event_type):
+    admission = db.get(ReviewAdmission, call.admission_id) if call.admission_id else None
+    if admission is not None and admission.project_linkage_review_id is not None:
+        source = db.get(ProjectLinkageReview, admission.project_linkage_review_id)
+        record_event(
+            db,
+            project_id=call.project_id,
+            actor_type="agent",
+            actor_id="platform-project-linkage-worker",
+            event_type=event_type,
+            object_type="project_linkage_review",
+            object_id=source.id,
+            plan_version_id=source.plan_version_id,
+            spec_version_id=source.spec_version_id,
+            details={
+                "execution_origin": "platform_project_linkage",
+                "initiated_by": str(source.requested_by),
+                "review_id": str(source.id),
+                "call_id": str(call.id),
+                "reviewer": call.reviewer,
+                "model": call.model,
+                "status": call.status,
+                "error_code": call.error_code,
+            },
+        )
+        return
     if call.spec_draft_request_id is not None:
         source = db.get(SpecDraftRequest, call.spec_draft_request_id)
         record_event(
@@ -135,14 +161,29 @@ def reserve_call(
     prices: dict,
     limits: QuotaLimits | None = None,
     spec_draft_request_id: UUID | None = None,
+    project_linkage_review_id: UUID | None = None,
+    project_linkage_claim_token: UUID | None = None,
 ) -> UUID:
     limits = limits or QuotaLimits()
     if (
         not isinstance(project_id, UUID)
         or not isinstance(call_id, UUID)
-        or (job_id is None) == (spec_draft_request_id is None)
+        or sum(
+            source is not None
+            for source in (job_id, spec_draft_request_id, project_linkage_review_id)
+        )
+        != 1
         or (job_id is not None and not isinstance(job_id, UUID))
         or (spec_draft_request_id is not None and not isinstance(spec_draft_request_id, UUID))
+        or (
+            project_linkage_review_id is not None
+            and not isinstance(project_linkage_review_id, UUID)
+        )
+        or (project_linkage_review_id is None) != (project_linkage_claim_token is None)
+        or (
+            project_linkage_claim_token is not None
+            and not isinstance(project_linkage_claim_token, UUID)
+        )
         or type(reserved_tokens) is not int
         or not 0 < reserved_tokens <= 10_000_000
         or re.fullmatch(r"[a-f0-9]{64}", input_hash) is None
@@ -161,7 +202,33 @@ def reserve_call(
         try:
             from app.services import model_disclosure
 
-            if spec_draft_request_id is not None:
+            project_source = None
+            if project_linkage_review_id is not None:
+                from app.models import Project
+                from app.services.projects import require_member
+
+                db.scalar(
+                    select(Project.id).where(Project.id == project_id).with_for_update(read=True)
+                )
+                project_source = db.scalar(
+                    select(ProjectLinkageReview)
+                    .where(
+                        ProjectLinkageReview.id == project_linkage_review_id,
+                        ProjectLinkageReview.project_id == project_id,
+                    )
+                    .with_for_update(read=True)
+                )
+                if (
+                    project_source is None
+                    or reviewer not in {"project_summary", "project_linkage"}
+                    or project_source.status != "running"
+                    or project_source.claim_token != project_linkage_claim_token
+                    or project_source.lease_until is None
+                    or project_source.lease_until <= _now(db)
+                ):
+                    raise LLMUsageError("项目完整衔接审核来源或租约无效")
+                require_member(db, project_id, project_source.requested_by, leader=True)
+            elif spec_draft_request_id is not None:
                 from app.models import Project
                 from app.services.projects import require_member
 
@@ -178,6 +245,8 @@ def reserve_call(
                         "数据外发告知已更新，请重新阅读后重试"
                     )
             else:
+                if reviewer in {"project_summary", "project_linkage"}:
+                    raise LLMUsageError("项目审核员只能用于项目完整衔接审核")
                 job = db.scalar(
                     select(ReviewJob)
                     .join(DeliveryVersion)
@@ -220,10 +289,14 @@ def reserve_call(
             admission = (
                 db.scalar(
                     select(ReviewAdmission)
-                    .where(ReviewAdmission.job_id == job_id)
+                    .where(
+                        ReviewAdmission.job_id == job_id
+                        if job_id is not None
+                        else ReviewAdmission.project_linkage_review_id == project_linkage_review_id
+                    )
                     .with_for_update()
                 )
-                if job_id is not None
+                if job_id is not None or project_linkage_review_id is not None
                 else None
             )
             if admission is None:
@@ -238,9 +311,17 @@ def reserve_call(
                 > limits.platform_daily_tokens
             ):
                 raise QuotaExceededError("platform_tokens", retry_at)
+            # 等待日桶锁期间租约可能到期；外发前的最终预留仍须属于当前执行。
+            if project_source is not None and project_source.lease_until <= _now(db):
+                raise LLMUsageError("项目完整衔接审核租约已到期")
             if admission is None:
-                if job_id is not None:
-                    admission = ReviewAdmission(job_id=job_id, project_id=project_id, day=day)
+                if job_id is not None or project_linkage_review_id is not None:
+                    admission = ReviewAdmission(
+                        job_id=job_id,
+                        project_linkage_review_id=project_linkage_review_id,
+                        project_id=project_id,
+                        day=day,
+                    )
                     db.add(admission)
                     db.flush()
                 project_budget.review_count += 1

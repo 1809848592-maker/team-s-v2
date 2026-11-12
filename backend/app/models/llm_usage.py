@@ -52,11 +52,21 @@ class DailyBudget(Base):
 
 class ReviewAdmission(Base):
     __tablename__ = "llm_review_admissions"
-    __table_args__ = (CheckConstraint("call_count >= 0", name="ck_llm_review_admissions_calls"),)
+    __table_args__ = (
+        CheckConstraint("call_count >= 0", name="ck_llm_review_admissions_calls"),
+        CheckConstraint(
+            "(job_id IS NOT NULL AND project_linkage_review_id IS NULL) OR "
+            "(job_id IS NULL AND project_linkage_review_id IS NOT NULL)",
+            name="ck_llm_review_admissions_source",
+        ),
+    )
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    job_id: Mapped[UUID] = mapped_column(
+    job_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("review_jobs.id", ondelete="RESTRICT"), unique=True
+    )
+    project_linkage_review_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("project_linkage_reviews.id", ondelete="RESTRICT"), unique=True
     )
     project_id: Mapped[UUID] = mapped_column(ForeignKey("projects.id", ondelete="RESTRICT"))
     day: Mapped[date] = mapped_column(Date)

@@ -16,7 +16,9 @@ from threading import Event, Thread
 from sqlalchemy.orm import Session
 
 from app.review.debug_records import LocalReviewDebugStore, ReviewDebugError
+from app.review.project_linkage import run_project_linkage_review
 from app.review.runner import DeliveryReviewInput, PipelineNotReadyError, run_delivery_review
+from app.services import project_linkage
 from app.services.llm_usage import QuotaExceededError
 from app.services.review_jobs import claim_next, complete_job, fail_job
 
@@ -240,6 +242,7 @@ def main() -> None:
     settings = get_settings()
     debug_store = LocalReviewDebugStore(settings.review_debug_path)
     next_debug_cleanup = 0.0
+    prefer_project = False
     logger.info("后台审核 worker 已启动")
     try:
         while not stopped.is_set():
@@ -250,14 +253,23 @@ def main() -> None:
                     logger.warning("审核调试记录清理暂时失败，将在下一周期重试")
                 next_debug_cleanup = time.monotonic() + 3600
             try:
-                processed = run_once(
-                    SessionLocal,
-                    timeout_seconds=settings.review_job_timeout_seconds,
-                    lease_grace_seconds=settings.review_job_lease_grace_seconds,
-                    max_attempts=settings.review_job_max_attempts,
-                    retry_delay_seconds=settings.review_job_retry_delay_seconds,
-                    stopped=stopped,
+                # 两条持久队列轮流优先；任一类任务持续到达都不会饿死另一类。
+                turns = (
+                    (run_project_once, run_once) if prefer_project else (run_once, run_project_once)
                 )
+                prefer_project = not prefer_project
+                processed = False
+                for turn in turns:
+                    processed = turn(
+                        SessionLocal,
+                        timeout_seconds=settings.review_job_timeout_seconds,
+                        lease_grace_seconds=settings.review_job_lease_grace_seconds,
+                        max_attempts=settings.review_job_max_attempts,
+                        retry_delay_seconds=settings.review_job_retry_delay_seconds,
+                        stopped=stopped,
+                    )
+                    if processed:
+                        break
             except Exception:
                 logger.warning("后台任务暂时无法处理，将重试；详细异常不写入日志")
                 processed = False
@@ -266,6 +278,52 @@ def main() -> None:
     finally:
         engine.dispose()
         logger.info("Worker 已停止")
+
+
+def run_project_once(
+    sessions,
+    *,
+    handler=run_project_linkage_review,
+    timeout_seconds=300,
+    lease_grace_seconds=5,
+    max_attempts=3,
+    retry_delay_seconds=5,
+    stopped=None,
+):
+    """项目队列共享相同硬超时和停止行为，不借用任何交付状态。"""
+    stopped = stopped if stopped is not None else Event()
+    if stopped.is_set():
+        return False
+    with sessions() as db:
+        claim = project_linkage.claim_next(
+            db,
+            timeout_seconds=timeout_seconds,
+            lease_grace_seconds=lease_grace_seconds,
+            max_attempts=max_attempts,
+            retry_delay_seconds=retry_delay_seconds,
+        )
+        db.commit()
+    if claim is None:
+        return False
+    outcome = _run_handler(handler, claim, timeout_seconds, stopped)
+    if outcome.stopped or stopped.is_set():
+        return True
+    with sessions() as db:
+        if outcome.result is not None:
+            project_linkage.complete_job(
+                db, claim, outcome.result, retry_delay_seconds=retry_delay_seconds
+            )
+        else:
+            project_linkage.fail_job(
+                db,
+                claim,
+                outcome.error_code or "execution_error",
+                retryable=outcome.error_code != "pipeline_not_ready",
+                retry_delay_seconds=retry_delay_seconds,
+                retry_at=outcome.retry_at,
+            )
+        db.commit()
+    return True
 
 
 if __name__ == "__main__":

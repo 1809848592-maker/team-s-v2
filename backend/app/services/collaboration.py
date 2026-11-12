@@ -299,6 +299,7 @@ def _finish_request_change(
     recipients: set[UUID] | None = None,
     details: dict | None = None,
     agent: Agent | None = None,
+    commit: bool = True,
 ) -> RequestInfo:
     if recipients is None:
         recipients = _target_users(db, item.project_id, item.target_user_id, item.target_module_id)
@@ -324,7 +325,10 @@ def _finish_request_change(
         message=f"{item.title}：{message}",
     )
     result = _request_infos(db, [item])[0]
-    db.commit()
+    if commit:
+        db.commit()
+    else:
+        db.flush()
     return result
 
 
@@ -335,6 +339,7 @@ def create_request(
     body: RequestCreate | dict,
     *,
     agent: Agent | None = None,
+    commit: bool = True,
 ) -> RequestInfo:
     if agent is not None:
         _authorize_agent(db, agent, "create_request", project_id, user_id)
@@ -367,6 +372,7 @@ def create_request(
         "收到新的协作需求",
         recipients=recipients,
         agent=agent,
+        commit=commit,
         details={
             "title": item.title,
             "target_user_id": str(item.target_user_id) if item.target_user_id else None,

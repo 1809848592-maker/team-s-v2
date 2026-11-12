@@ -107,8 +107,16 @@ def test_defaults_are_frozen_secret_free_and_only_enable_deepseek():
         "logic",
         "linkage",
         "spec_draft",
+        "project_summary",
+        "project_linkage",
     }
-    for name in ("spec_compliance", "citation_extract", "citation_alignment", "spec_draft"):
+    for name in (
+        "spec_compliance",
+        "citation_extract",
+        "citation_alignment",
+        "spec_draft",
+        "project_summary",
+    ):
         profile = configuration.reviewers[name]
         assert (profile.model, profile.thinking, profile.max_tokens) == (
             "deepseek-flash",
@@ -116,7 +124,7 @@ def test_defaults_are_frozen_secret_free_and_only_enable_deepseek():
             4096,
         )
         assert profile.prices.input_cache_hit == Decimal("0.04")
-    for name in ("logic", "linkage"):
+    for name in ("logic", "linkage", "project_linkage"):
         profile = configuration.reviewers[name]
         assert (profile.model, profile.thinking, profile.max_tokens) == (
             "deepseek-v4-pro",

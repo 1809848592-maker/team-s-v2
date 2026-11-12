@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Account } from '../api/auth'
-import { ApiError, api, dateText, errorText, isPlatformReviewWorker, projectPath, requestLabels, reviewJobEventLabels, reviewStatusText, stageLabels } from '../api/client'
+import { ApiError, api, dateText, errorText, isPlatformReviewWorker, isProjectLinkageWorker, projectLinkageEventLabels, projectPath, requestLabels, reviewJobEventLabels, reviewStatusText, stageLabels } from '../api/client'
 import type { Project, Member, Module, ModuleProgress, Progress, Delivery, DraftView, CollaborationRequest, Notification, ProjectEvent, ModelDisclosure } from '../api/types'
 import PlanPanel from './PlanPanel.vue'
 import SpecPanel from './SpecPanel.vue'
@@ -13,6 +13,7 @@ import DeliveryReviewStatus from './DeliveryReviewStatus.vue'
 import DeliveryVersionBinding from './DeliveryVersionBinding.vue'
 import ModelDisclosureNotice from './ModelDisclosureNotice.vue'
 import AdminUsagePanel from './AdminUsagePanel.vue'
+import ProjectLinkagePanel from './ProjectLinkagePanel.vue'
 import { useReviewPolling } from '../composables/useReviewPolling'
 const props = defineProps<{account:Account;busy:boolean;logoutError?:string}>()
 defineEmits<{logout:[]}>()
@@ -24,7 +25,7 @@ const inviteRole = ref<'member'|'leader'>('member'), inviteLink = ref(''), showM
 const modelDisclosure = ref<ModelDisclosure | null>(null), disclosureError = ref(''), disclosureLoading = ref(false), creationConsent = ref(false)
 let disclosureSequence = 0
 const inviteToken = ref(new URLSearchParams(window.location.search).get('invite') ?? '')
-const tabs = [{key:'board',label:'项目看板'},{key:'plan',label:'方案与分工'},{key:'spec',label:'规范与模板'},{key:'tasks',label:'任务与交付'},{key:'requests',label:'协作需求'},{key:'agents',label:'我的智能体'},{key:'timeline',label:'时间线'}] as const
+const tabs = [{key:'board',label:'项目看板'},{key:'plan',label:'方案与分工'},{key:'spec',label:'规范与模板'},{key:'tasks',label:'任务与交付'},{key:'linkage',label:'衔接审核'},{key:'requests',label:'协作需求'},{key:'agents',label:'我的智能体'},{key:'timeline',label:'时间线'}] as const
 const tab = ref<string>('board')
 const agentPageVersion = ref(0)
 const preferredModule = ref('')
@@ -48,12 +49,13 @@ function latestDelivery(moduleId:string) { return deliveries.value.filter(item=>
 function progressSource(item:Progress) { return item.source==='agent' ? `${item.agent_name || '智能体'} 代表 ${name(item.user_id)}` : `${name(item.user_id)} · 本人记录` }
 function eventActor(event:ProjectEvent) {
   if(isPlatformReviewWorker(event)) return '平台审核后台'
+  if(isProjectLinkageWorker(event)) return '平台衔接审核后台'
   if(event.actor_type==='agent' && event.actor_id==='platform-spec-drafter' && event.represented_user_id===null && event.details.execution_origin==='platform_spec_draft') return '平台规范起草'
   if(event.actor_type==='human') return name(event.actor_id)
   const agent = progress.value.map(item=>item.last_report).find(item=>item?.agent_id===event.actor_id) ?? drafts.value.find(item=>item.agent_id===event.actor_id) ?? requests.value.flatMap(item=>item.messages).find(item=>item.agent_id===event.actor_id)
   return `${agent?.agent_name || '智能体'} 代表 ${event.represented_user_id ? name(event.represented_user_id) : '所属人'}`
 }
-const activityLabels: Record<string,string> = {...reviewJobEventLabels,project_created:'创建项目',model_data_transfer_consented:'同意审核数据外发',submission_data_transfer_disclosed:'阅读首次交付外发告知',llm_project_quota_updated:'调整项目审核额度',invitation_created:'创建邀请',member_joined:'加入项目',plan_published:'发布方案',module_updated:'更新分工',spec_published:'发布规范',spec_draft_requested:'请求辅助起草规范',spec_draft_generated:'生成规范条目草稿',template_uploaded:'上传模板',delivery_submitted:'提交交付',delivery_resubmission_requested:'要求重新提交交付',delivery_review_started:'开始交付审核',delivery_review_state_changed:'更新交付审核状态',agent_registered:'登记智能体',agent_revoked:'吊销智能体令牌',agent_draft_uploaded:'上传交付稿',agent_draft_confirmed:'确认交付稿',material_uploaded:'上传共享材料',progress_reported:'回报进度',request_created:'发起需求',request_accepted:'接手需求',request_responded:'回应需求',request_supplemented:'补充需求',request_resolved:'确认解决',notification_read:'阅读通知'}
+const activityLabels: Record<string,string> = {...reviewJobEventLabels,...projectLinkageEventLabels,project_created:'创建项目',model_data_transfer_consented:'同意审核数据外发',submission_data_transfer_disclosed:'阅读首次交付外发告知',llm_project_quota_updated:'调整项目审核额度',invitation_created:'创建邀请',member_joined:'加入项目',plan_published:'发布方案',module_updated:'更新分工',spec_published:'发布规范',spec_draft_requested:'请求辅助起草规范',spec_draft_generated:'生成规范条目草稿',template_uploaded:'上传模板',delivery_submitted:'提交交付',delivery_resubmission_requested:'要求重新提交交付',delivery_review_started:'开始交付审核',delivery_review_state_changed:'更新交付审核状态',agent_registered:'登记智能体',agent_revoked:'吊销智能体令牌',agent_draft_uploaded:'上传交付稿',agent_draft_confirmed:'确认交付稿',material_uploaded:'上传共享材料',progress_reported:'回报进度',request_created:'发起需求',request_accepted:'接手需求',request_responded:'回应需求',request_supplemented:'补充需求',request_resolved:'确认解决',notification_read:'阅读通知'}
 function refreshProject() { ++agentPageVersion.value; void loadProject() }
 async function loadProject() {
   const pid = selected.value, accountId = props.account.id, sequence = ++serial
@@ -168,6 +170,7 @@ onBeforeUnmount(()=>{mounted=false;++serial;++disclosureSequence})
         <PlanPanel v-if="tab==='plan'" :key="selected" :project-id="selected" :members="members" :leader="leader" @changed="loadProject"/>
         <SpecPanel v-if="tab==='spec'" :key="`${selected}:${account.id}`" :project-id="selected" :account-id="account.id" :leader="leader" @changed="loadProject"/>
         <TaskPanel v-if="tab==='tasks'" :initial-module-id="preferredModule" :key="selected" :project-id="selected" :members="members" :account-id="account.id" @changed="loadProject"/>
+        <ProjectLinkagePanel v-if="tab==='linkage'" :key="`${selected}:${account.id}`" :project-id="selected" :account-id="account.id" :leader="leader" :members="members" :modules="modules" @changed="loadProject" @open-requests="tab='requests'"/>
         <RequestPanel v-if="tab==='requests'" :key="selected" :project-id="selected" :members="members" :account-id="account.id" @changed="loadProject"/>
         <AgentPanel v-if="tab==='agents'" :key="`${selected}:${agentPageVersion}`" :project-id="selected" :account-id="account.id" @changed="loadProject"/>
         <EventTimeline v-if="tab==='timeline'" :key="selected" :project-id="selected" :members="members" :modules="modules" :deliveries="deliveries" :leader="leader"/>
