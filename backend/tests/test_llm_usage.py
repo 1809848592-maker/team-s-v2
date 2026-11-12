@@ -119,8 +119,12 @@ def account_snapshot(environment):
     with environment.sessions() as db:
         result = {}
         for model in (DailyBudget, LLMProjectPolicy, ModelCall, ReviewAdmission):
-            rows = [dict(item) for item in db.execute(select(model.__table__)).mappings()]
-            result[model.__tablename__] = sorted(rows, key=repr)
+            result[model.__tablename__] = [
+                dict(item)
+                for item in db.execute(
+                    select(model.__table__).order_by(*model.__table__.primary_key.columns)
+                ).mappings()
+            ]
         return result
 
 

@@ -85,7 +85,10 @@ def review_snapshot(environment, team, delivery):
             ("events", Event.__table__, Event.project_id == UUID(team.project["id"])),
         ):
             result[name] = [
-                dict(row) for row in db.execute(select(table).where(condition)).mappings()
+                dict(row)
+                for row in db.execute(
+                    select(table).where(condition).order_by(*table.primary_key.columns)
+                ).mappings()
             ]
         return result
 

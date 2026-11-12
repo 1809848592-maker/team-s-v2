@@ -23,7 +23,10 @@ def snapshot(environment, project_id):
     with environment.sessions() as db:
         return {
             model.__tablename__: [
-                dict(row) for row in db.execute(select(model.__table__)).mappings()
+                dict(row)
+                for row in db.execute(
+                    select(model.__table__).order_by(*model.__table__.primary_key.columns)
+                ).mappings()
             ]
             for model in (DeliveryVersion, DeliveryWorkflow, ReviewJob, Event)
         }
