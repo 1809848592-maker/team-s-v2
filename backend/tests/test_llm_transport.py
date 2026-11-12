@@ -116,12 +116,12 @@ def test_defaults_are_frozen_secret_free_and_only_enable_deepseek():
             4096,
         )
         assert profile.prices.input_cache_hit == Decimal("0.04")
-    for name, max_tokens in (("logic", 8192), ("linkage", 16384)):
+    for name in ("logic", "linkage"):
         profile = configuration.reviewers[name]
         assert (profile.model, profile.thinking, profile.max_tokens) == (
             "deepseek-v4-pro",
             True,
-            max_tokens,
+            16384,
         )
         assert profile.prices.output == Decimal("27")
     with pytest.raises(ValidationError):
@@ -231,7 +231,7 @@ def test_thinking_profile_uses_its_own_configuration_and_reasoning_is_not_added_
     def handler(request):
         payload = json.loads(request.content)
         assert payload["model"] == "deepseek-v4-pro"
-        assert payload["thinking"] == {"type": "enabled"} and payload["max_tokens"] == 8192
+        assert payload["thinking"] == {"type": "enabled"} and payload["max_tokens"] == 16384
         usage = {**USAGE, "completion_tokens_details": {"reasoning_tokens": 12}}
         return httpx2.Response(200, json=response_body(usage=usage))
 

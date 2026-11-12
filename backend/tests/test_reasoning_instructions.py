@@ -125,7 +125,7 @@ def fixture(reviewer, index):
 @pytest.mark.parametrize("reviewer", REVIEWERS)
 def test_resources_have_fixed_six_fields_trusted_schema_and_immutable_examples(reviewer):
     bundle = load_reasoning_instruction(reviewer)
-    assert bundle.reviewer == reviewer and bundle.version == "2026-11-12.1"
+    assert bundle.reviewer == reviewer and bundle.version == "2026-11-12.2"
     assert bundle.output_model is ReasoningOutput
     assert len(bundle.positive_examples) == 4 and len(bundle.negative_examples) == 2
     assert len(bundle.system_text().encode("utf-8")) < loader.MAX_INSTRUCTION_BYTES
@@ -238,7 +238,7 @@ def test_corrupt_resource_has_fixed_safe_error(reviewer, corruption, tmp_path, m
     )
     data = {
         "identity": raw.replace(f'reviewer = "{reviewer}"'.encode(), b'reviewer = "unknown"'),
-        "version": raw.replace(b"2026-11-12.1", b"2026-11-13.1"),
+        "version": raw.replace(b"2026-11-12.2", b"2026-11-13.1"),
         "encoding": b"\xffPRIVATE_RESOURCE_BODY",
         "size": b"#" * (loader.MAX_INSTRUCTION_BYTES + 1),
         "missing": raw,

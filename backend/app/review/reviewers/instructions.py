@@ -259,7 +259,7 @@ def load_reasoning_instruction(reviewer: str) -> InstructionBundle:
         with resource.open("rb") as stream:
             data = stream.read(MAX_INSTRUCTION_BYTES + 1)
         bundle = _parse(data, output_model=ReasoningOutput)
-        if bundle.reviewer != reviewer or bundle.version != "2026-11-12.1":
+        if bundle.reviewer != reviewer or bundle.version != "2026-11-12.2":
             raise ValueError
         return bundle
     except (OSError, ValueError, TypeError, OverflowError, RecursionError):

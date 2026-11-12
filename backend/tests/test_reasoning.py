@@ -459,11 +459,16 @@ def test_linkage_cannot_substitute_other_sources_for_the_claimed_comparison(key,
 
 
 def test_one_comparison_can_have_multiple_distinct_findings_with_the_same_context_source():
-    checks = [check("goal"), check("argument"), check("support", "issues")]
+    checks = [check("goal", "issues"), check("argument"), check("support")]
+    refs = [context_ref("module.goal", module()["goal"])]
     first = opinion()
     second = opinion(excerpt=OTHER, location=location(3), severity="suggestion")
     raw = output(
-        "logic", first, second, checks=checks, links=[finding_link(index=0), finding_link(index=1)]
+        "logic",
+        first,
+        second,
+        checks=checks,
+        links=[finding_link("goal", refs, index=0), finding_link("goal", refs, index=1)],
     )
     result = review(FakeClient(raw, output("linkage")))
     assert result["status"] == "completed"
