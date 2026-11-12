@@ -114,7 +114,11 @@ def load_review_history(db, item):
                 {
                     "finding_id": finding.id,
                     "opinion": OpinionDraft.model_validate(
-                        {key: finding.opinion[key] for key in OpinionDraft.model_fields}
+                        {
+                            key: finding.opinion[key]
+                            for key in OpinionDraft.model_fields
+                            if key in finding.opinion
+                        }
                     ),
                     "handling": handling["handling"],
                     "reason": handling["reason"],
@@ -224,7 +228,9 @@ def normalize_components(components):
             findings.extend(_model_findings(report.get("review")))
         elif name == "citations":
             for raw in report.get("database_findings", []) if status == "completed" else []:
-                OpinionDraft.model_validate({key: raw[key] for key in OpinionDraft.model_fields})
+                OpinionDraft.model_validate(
+                    {key: raw[key] for key in OpinionDraft.model_fields if key in raw}
+                )
                 findings.append(raw)
             findings.extend(_model_findings(report.get("alignment")))
         elif name == "reasoning":

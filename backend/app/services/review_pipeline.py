@@ -99,4 +99,7 @@ def execute_pipeline(sessions, review, *, storage, client, database_client) -> d
                 "error_code": "execution_error",
                 "summary": "此审核步骤未完成，请稍后重试。",
             }
+    from app.services.review_convergence import apply_review_convergence
+
+    components = apply_review_convergence(sessions, review, components, storage=storage)
     return stage_report(sessions, review, components)

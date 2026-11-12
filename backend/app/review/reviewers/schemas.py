@@ -63,6 +63,8 @@ class OpinionDraft(ReviewSchema):
     problem: Text
     basis: OpinionBasis
     suggestion: Text
+    original_severity: Severity | None = Field(default=None, exclude_if=lambda value: value is None)
+    convergence_note: ShortText | None = Field(default=None, exclude_if=lambda value: value is None)
 
 
 class ReviewCoverage(ReviewSchema):

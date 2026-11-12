@@ -146,6 +146,77 @@ def citation_alignment_preseed_hit(result):
     return False
 
 
+def recovery_completed(report):
+    """14.10.6恢复只验证完成，不将returned误判为链路失败。"""
+    return report.get("coverage") == "completed"
+
+
+def failed_e2e_for_recovery(root):
+    """只补唯一真实E2E在修订稿退回后尚未执行的恢复阶段。"""
+    marker_path = root / ".verification/M3-17-live-e2e-started.json"
+    require(marker_path.is_file() and marker_path.stat().st_size <= 8192, "e2e_marker_required")
+    marker = json.loads(marker_path.read_text())
+    require(
+        marker.get("revision") == "M3-17" and marker.get("layer") == "e2e",
+        "e2e_marker_invalid",
+    )
+    directory = Path(marker["evidence"]).resolve()
+    require(directory.is_relative_to((root / ".verification").resolve()), "e2e_source_invalid")
+    path = directory / "report.json"
+    require(path.is_file() and path.stat().st_size <= 1048576, "e2e_report_required")
+    raw = path.read_bytes()
+    previous = json.loads(raw)
+    require(
+        previous.get("revision") == "M3-17"
+        and previous.get("mode") == "live"
+        and previous.get("layer") == "e2e"
+        and previous.get("success") is False
+        and previous.get("failure", {}).get("code") == "revised_delivery_did_not_reach_final_review"
+        and previous.get("real_model_network_calls", 0) > 0
+        and all(
+            previous.get("cleanup", {}).get(key) is True
+            for key in ("schema_removed", "http_stopped", "storage_removed")
+        )
+        and not any(
+            row.get("name") == "local_transport_disconnect_never_approves"
+            for row in previous.get("steps", [])
+        )
+        and not (directory / "disconnected-review.json").exists()
+        and not (directory / "recovered-review.json").exists(),
+        "only_unexecuted_recovery_may_continue",
+    )
+    return {"failed_e2e_report": str(path), "sha256": hashlib.sha256(raw).hexdigest()}
+
+
+def revision_file(path):
+    """手动验收修订合成稿；绝不执行输入，只读取有界JSON正文。"""
+    require(path.is_absolute() and path.is_file(), "revision_input_unavailable")
+    require(path.stat().st_size <= 131072, "revision_input_too_large")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    require(
+        isinstance(data, dict) and set(data) == {"paragraphs", "handoff_note", "change_note"},
+        "revision_input_invalid",
+    )
+    paragraphs = data["paragraphs"]
+    require(
+        isinstance(paragraphs, list)
+        and 1 <= len(paragraphs) <= 100
+        and all(
+            isinstance(item, str) and 0 < len(item) <= 10000 and "\0" not in item
+            for item in paragraphs
+        ),
+        "revision_input_invalid",
+    )
+    require(
+        all(
+            isinstance(data[k], str) and 0 < len(data[k]) <= 10000 and "\0" not in data[k]
+            for k in ("handoff_note", "change_note")
+        ),
+        "revision_input_invalid",
+    )
+    return data
+
+
 def write_json(path, value, *, sensitive=None):
     encoded = json.dumps(value, ensure_ascii=False, indent=2, default=str)
     if sensitive:
@@ -252,7 +323,13 @@ def parser():
     result.add_argument("--max-model-calls", type=int, default=60, choices=range(1, 61))
     result.add_argument("--token-budget", type=int, default=2000000)
     result.add_argument("--model-timeout-seconds", type=int)
-    result.add_argument("--layer", choices=("reviewers", "e2e"), default="e2e")
+    result.add_argument("--layer", choices=("reviewers", "e2e", "recovery"), default="e2e")
+    result.add_argument("--milestone", choices=("M3-16", "M3-17"), default="M3-16")
+    result.add_argument(
+        "--revision-input",
+        type=Path,
+        help="M3-17 manual acceptance: wait for bounded synthetic revision JSON after first report",
+    )
     return result
 
 
@@ -270,6 +347,19 @@ def main(argv=None):
     require(
         arguments.mode == "live" or arguments.key_file is None,
         "mock_never_reads_key_files",
+    )
+    require(
+        arguments.milestone != "M3-17" or arguments.layer in {"e2e", "recovery"},
+        "m317_only_runs_resubmission_or_recovery",
+    )
+    require(
+        arguments.layer != "recovery" or arguments.milestone == "M3-17",
+        "recovery_continuation_requires_m317",
+    )
+    require(
+        arguments.revision_input is None
+        or (arguments.milestone == "M3-17" and arguments.layer == "e2e"),
+        "manual_revision_requires_m317",
     )
     sys.path.insert(0, str(BACKEND))
     # Neutralize ambient settings before importing app.db/main. Never implicitly open any .env.
@@ -326,6 +416,17 @@ def main(argv=None):
         if arguments.mode == "live"
         else None
     )
+    if money is not None and arguments.milestone == "M3-17":
+        require(
+            (ROOT / ".verification/M3-16-live-budget.json").is_file(),
+            "m317_requires_existing_m316_budget",
+        )
+        require(money.summary()["call_count"] >= 28, "m317_budget_history_missing")
+    continuation = (
+        failed_e2e_for_recovery(ROOT)
+        if arguments.mode == "live" and arguments.layer == "recovery"
+        else None
+    )
     key = (
         read_explicit_key(arguments.key_file)
         if arguments.mode == "live"
@@ -337,12 +438,13 @@ def main(argv=None):
     output.chmod(0o700)
     report = {
         "mode": arguments.mode,
-        "revision": "M3-16",
+        "revision": arguments.milestone,
         "layer": arguments.layer,
         "schema": f"accept_m3_{suffix}",
         "started_utc": datetime.now(UTC).isoformat(),
         "steps": [],
         "success": False,
+        "continuation": continuation,
         "limits": {
             "max_model_calls": arguments.max_model_calls,
             "platform_token_budget": arguments.token_budget,
@@ -472,6 +574,16 @@ def main(argv=None):
                     context_excerpt=source,
                 )
             ]
+        if arguments.milestone == "M3-17" and name == "logic" and revised:
+            segment = next(item for item in segments if QUALITY_MEASUREMENT in item["text"])
+            result["findings"].append(
+                opinion(
+                    "support",
+                    segment,
+                    "补充追问轮次的观察细节尚待进一步约定。",
+                    "在预注册时进一步明确观察细节。",
+                )
+            )
         return result
 
     def mock_model(request):
@@ -615,7 +727,10 @@ def main(argv=None):
             identity = kwargs["call_id"]
             if money is not None and not status["disconnected"]:
                 if not live_layer_claimed:
-                    marker = ROOT / f".verification/M3-16-live-{arguments.layer}-started.json"
+                    marker = (
+                        ROOT
+                        / f".verification/{arguments.milestone}-live-{arguments.layer}-started.json"
+                    )
                     try:
                         descriptor = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     except FileExistsError:
@@ -624,7 +739,7 @@ def main(argv=None):
                     with os.fdopen(descriptor, "w") as stream:
                         json.dump(
                             {
-                                "revision": "M3-16",
+                                "revision": arguments.milestone,
                                 "layer": arguments.layer,
                                 "evidence": str(output),
                                 "started_utc": datetime.now(UTC).isoformat(),
@@ -971,17 +1086,18 @@ def main(argv=None):
             else RestrictedBibliographyTransport(),
             timeout_seconds=8,
         )
-        fixture_verification = database.verify(
-            CitationQuery(fixture_title, ("Smith, Z.", "Novoid, Q."), 2025, None, False)
-        )
-        evidence(output / "fixture-verification.json", fixture_verification.to_dict())
-        require(
-            fixture_verification.status == "not_found"
-            and {source.provider for source in fixture_verification.sources}
-            == {"crossref", "openalex"}
-            and all(source.status == "no_match" for source in fixture_verification.sources),
-            "fabricated_fixture_database_preflight_failed",
-        )
+        if arguments.layer != "recovery":
+            fixture_verification = database.verify(
+                CitationQuery(fixture_title, ("Smith, Z.", "Novoid, Q."), 2025, None, False)
+            )
+            evidence(output / "fixture-verification.json", fixture_verification.to_dict())
+            require(
+                fixture_verification.status == "not_found"
+                and {source.provider for source in fixture_verification.sources}
+                == {"crossref", "openalex"}
+                and all(source.status == "no_match" for source in fixture_verification.sources),
+                "fabricated_fixture_database_preflight_failed",
+            )
         bad = document_bytes(
             [
                 "科研交接研究的概念与假设。",
@@ -1211,7 +1327,7 @@ def main(argv=None):
                 step("reviewer_" + reviewer + "_measured", **unit_results[reviewer])
             unit_target = None
             report["reviewer_results"] = unit_results
-        else:
+        elif arguments.layer == "e2e":
             first = submit(bad, "problematic.docx", handoff_note=BAD_HANDOFF)
             first_report, first_state = execute(first, "first")
             require(
@@ -1279,7 +1395,26 @@ def main(argv=None):
                 "human_adopts_repairs_and_rejects_logic_with_reason",
                 not_adopted_ids=rejected_ids,
             )
-            second = submit(revised, "revised.docx")
+            revision_handoff = GOOD_HANDOFF
+            if arguments.revision_input is not None:
+                print(f"READY revision input: {arguments.revision_input}", flush=True)
+                wait_until = time.monotonic() + 900
+                while not arguments.revision_input.exists() and time.monotonic() < wait_until:
+                    time.sleep(0.25)
+                manual = revision_file(arguments.revision_input)
+                revised = document_bytes(manual["paragraphs"], correct_font=True)
+                revision_handoff = manual["handoff_note"]
+                (output / "revised.docx").write_bytes(revised)
+                evidence(
+                    output / "revision-change-note.json",
+                    {
+                        "change_note": manual["change_note"],
+                        "input_sha256": hashlib.sha256(
+                            arguments.revision_input.read_bytes()
+                        ).hexdigest(),
+                    },
+                )
+            second = submit(revised, "revised.docx", handoff_note=revision_handoff)
             second_report, second_state = execute(second, "revised")
             require(
                 second_report.get("coverage") == "completed"
@@ -1291,6 +1426,28 @@ def main(argv=None):
                 "cannot_accept_loop_bypass_as_clean_review",
             )
             final = api(leader, "GET", prefix + f"/deliveries/{second['id']}/review/final")
+            evidence(output / "revised-final-context.json", final)
+            if arguments.milestone == "M3-17":
+                downgraded = [
+                    row
+                    for row in second_report["opinions"]
+                    if row["opinion"].get("convergence_note")
+                ]
+                require(
+                    all(
+                        row["opinion"]["severity"] == "suggestion"
+                        and row["opinion"].get("original_severity") in {"important", "blocking"}
+                        for row in downgraded
+                    ),
+                    "convergence_did_not_preserve_original_severity",
+                )
+                if arguments.mode == "mock":
+                    require(downgraded, "mock_resubmission_did_not_exercise_convergence")
+                report["convergence"] = {
+                    "downgraded_opinions": len(downgraded),
+                    "resubmission_reached_final_review": True,
+                }
+
             retained = [row for row in final["not_adopted"] if row["reason"] == REJECTION_REASON]
             require(
                 retained and final["can_decide"],
@@ -1329,6 +1486,7 @@ def main(argv=None):
             )
             step("leader_final_review_adopts_revised_delivery")
 
+        if arguments.layer in {"e2e", "recovery"}:
             interrupted = submit(
                 recovery,
                 "connection-recovery.docx",
@@ -1358,14 +1516,15 @@ def main(argv=None):
             require(queued["status"] == "retry_wait", "public_retry_did_not_queue")
             recovered_report, recovered_state = execute(interrupted, "recovered")
             require(
-                recovered_report.get("coverage") == "completed"
-                and recovered_state["review_status"] == "pending_final_review",
+                recovery_completed(recovered_report),
                 "recovery_did_not_complete",
             )
             step(
                 "public_human_retry_restores_completed_review",
                 preserved_attempt=queued["attempt"],
                 recovered_attempt=recovered_state["review_progress"]["attempt"],
+                recovered_delivery_state=recovered_state["review_status"],
+                criterion="coverage=completed (design 14.10.6)",
             )
         measured = ledger()
         with sessions() as db:
@@ -1418,7 +1577,7 @@ def main(argv=None):
             "administrator_summary_csv_and_reviewer_costs_reconcile",
             rows=len(exported_rows),
         )
-        report["success"] = arguments.layer == "e2e" or all(
+        report["success"] = arguments.layer in {"e2e", "recovery"} or all(
             row["passed"] for row in unit_results.values()
         )
     except (Exception, ReviewDeadline) as error:
