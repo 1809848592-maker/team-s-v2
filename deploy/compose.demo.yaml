@@ -1,0 +1,77 @@
+# Self-contained offline demonstration; never merge with production/development Compose.
+name: teams-platform-demo
+
+x-backend: &backend
+  image: teams-platform:demo
+  build:
+    context: ..
+    dockerfile: backend/Dockerfile
+  environment: &environment
+    DATABASE_URL: postgresql+psycopg://teams_demo:demo_local_only@postgres:5432/teams_demo
+    STATIC_DIR: /app/static
+    STORAGE_DIR: /app/storage/content
+    DEEPSEEK_API_KEY: ""
+    LLM_ENABLE_LIVE_CALLS: "false"
+    SESSION_COOKIE_SECURE: "false"
+    PLATFORM_ADMIN_USER_IDS: ""
+    MCP_ALLOWED_HOSTS: 127.0.0.1:*,localhost:*,[::1]:*
+    MCP_ALLOWED_ORIGINS: http://127.0.0.1:*,http://localhost:*,http://[::1]:*
+  volumes:
+    - files_demo_data:/app/storage
+  init: true
+  restart: "no"
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "2"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: teams_demo
+      POSTGRES_USER: teams_demo
+      POSTGRES_PASSWORD: demo_local_only
+    volumes:
+      - postgres_demo_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U teams_demo -d teams_demo"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  seed:
+    <<: *backend
+    profiles: ["seed"]
+    command: ["python", "-m", "app.demo_bootstrap"]
+    environment:
+      <<: *environment
+      DEMO_DATABASE_URL: postgresql+psycopg://teams_demo:demo_local_only@postgres:5432/teams_demo
+      DEMO_STORAGE_DIR: /app/storage
+
+  web:
+    <<: *backend
+    command: ["sh", "-c", "alembic upgrade head && exec uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+    ports:
+      - "127.0.0.1:${DEMO_WEB_PORT:-18005}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=5)"]
+      interval: 5s
+      timeout: 6s
+      retries: 12
+
+  worker:
+    <<: *backend
+    command: ["python", "-m", "app.worker"]
+    depends_on:
+      web:
+        condition: service_healthy
+    stop_grace_period: 330s
+
+volumes:
+  postgres_demo_data:
+  files_demo_data:
