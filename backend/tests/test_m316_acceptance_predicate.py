@@ -1,6 +1,10 @@
 """验收判定遵守14.9可选上下文；只用固定响应，绝不调用真实模型。"""
 
 import importlib.util
+import json
+import os
+import subprocess
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -58,3 +62,38 @@ def test_other_issues_unverified_or_incomplete_do_not_count(path, value):
         node = node[key]
     node[path[-1]] = value
     assert not driver.citation_alignment_preseed_hit(sample)
+
+
+def test_mock_reviewer_cli_hits_every_preseed_and_cleans_up(tmp_path):
+    database_url = os.environ.get("TEST_DATABASE_URL")
+    if not database_url:
+        pytest.skip("Set TEST_DATABASE_URL to an isolated PostgreSQL test database")
+    backend = Path(__file__).parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(backend.parent / "scripts/accept_m3.py"),
+            "--mode",
+            "mock",
+            "--layer",
+            "reviewers",
+            "--database-url",
+            database_url,
+            "--output-dir",
+            str(tmp_path / "evidence"),
+        ],
+        cwd=backend,
+        env={**os.environ, "DEEPSEEK_API_KEY": "", "LLM_ENABLE_LIVE_CALLS": "false"},
+        capture_output=True,
+        text=True,
+        timeout=90,
+        check=False,
+    )
+    report = json.loads(next((tmp_path / "evidence").glob("run-*/report.json")).read_text())
+    assert result.returncode == 0, report.get("reviewer_results", report.get("failure"))
+    assert report["success"] and all(report["cleanup"].values())
+    assert report["real_model_network_calls"] == report["real_bibliography_network_requests"] == 0
+    assert set(report["reviewer_results"]) == set(driver.REVIEWERS)
+    for row in report["reviewer_results"].values():
+        assert row["passed"] and row["successes"] == row["model_calls"] == 2
+        assert all(trial["preseed_hit"] and trial["structurally_valid"] for trial in row["trials"])

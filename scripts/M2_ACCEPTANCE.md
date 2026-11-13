@@ -26,6 +26,8 @@ python scripts/m2_acceptance.py \
 5. B 在网页填写必选 AI 声明并确认真实 Claude Code 上传的稿件，检查正式版本对成员共享、原字节及声明留存、人类确认身份；Bearer 同时携带人类 Cookie 也不能确认或改规范。
 6. 核对拒绝事件的具体交付、跨项目 ID、操作者与代表的人；查看和筛选网页时间线。注入智能体列表和吊销 500，恢复后吊销，HTTP/MCP 均立即 401；检查 390px 页面及桌面截图。
 
+M3 后台审核开启时，交付的 `review_status`、`review_progress` 会继续推进；私稿确认前后的共享检查逐项比较提交记录的其余字段，并仍核对版本数量、声明、绑定、提交人及原字节。用户智能体事件按本次登记的精确 ID 核对，平台审核后台事件不计入其代表 B 的操作。审核状态和后台事件另由 M3 验收覆盖。
+
 输出目录含 `report.json`、`mcp-report.json`、`claude-report.json`、事件及截图和浏览器 trace。`credentials.json`、`agent-token.json`、trace 或 HTML 含测试凭据，仅保留在忽略目录；令牌文件为 600 权限。CLI 的临时配置、脱敏 transcript 和本地替身证据也留在本次目录。脚本不会把原始令牌放进命令行、日志或 MCP 配置片段。SDK 报告只保存固定检查项和对象 ID。
 
 此外，`m2_draft_regressions.py` 可独立复跑 M2-06 的私稿确认失败重试与原子提交浏览器检查；其准备数据中的登记/上传走 HTTP，不能替代上述真实 Claude Code 的完整里程碑验收。

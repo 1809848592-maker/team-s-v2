@@ -13,7 +13,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from m1_acceptance import Acceptance, write_json
+from m1_acceptance import Acceptance, submission_snapshot, write_json
 from playwright.sync_api import expect, sync_playwright
 
 
@@ -300,7 +300,9 @@ class M2Acceptance(Acceptance):
             headers=auth,
         )
         assert denied_spec.status == 403
-        assert self.api("B", self.path + "/deliveries") == [self.forbidden]
+        assert [
+            submission_snapshot(item) for item in self.api("B", self.path + "/deliveries")
+        ] == [submission_snapshot(self.forbidden)]
         assert len(self.api("A", self.path + "/spec/versions")) == 1
         page = self.tab("B", "项目看板", reload=True)
         draft_button = page.get_by_role(
@@ -333,14 +335,21 @@ class M2Acceptance(Acceptance):
             == hashlib.sha256(self.draft_file.read_bytes()).hexdigest()
         )
         for role in "AC":
-            assert delivery in self.api(role, self.path + "/deliveries")
+            assert submission_snapshot(delivery) in [
+                submission_snapshot(item) for item in self.api(role, self.path + "/deliveries")
+            ]
             assert (
                 self.pages[role].context.request.get(delivery["download_url"]).body()
                 == self.draft_file.read_bytes()
             )
         events = self.api("A", self.path + "/events")
         self.events = events
-        agent_events = [event for event in events if event["actor_type"] == "agent"]
+        agent_id = self.registered["agent"]["id"]
+        agent_events = [
+            event
+            for event in events
+            if event["actor_type"] == "agent" and event["actor_id"] == agent_id
+        ]
         assert agent_events and all(
             event["represented_user_id"] == self.accounts["B"]["id"]
             for event in agent_events
@@ -383,7 +392,6 @@ class M2Acceptance(Acceptance):
             "代表 " + self.accounts["B"]["username"]
         )
         expect(rejection.first).to_contain_text("智能体权限请求被拒绝")
-        agent_id = self.registered["agent"]["id"]
         page.get_by_label("按操作者查看", exact=True).select_option(agent_id)
         expect(page.locator("[data-event-type]")).to_have_count(len(agent_events))
         page.screenshot(path=str(self.output / "agent-timeline.png"), full_page=True)

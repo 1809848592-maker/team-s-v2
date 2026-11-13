@@ -539,7 +539,7 @@ def main(argv=None):
                 )
             ]
         elif name == "citation_alignment" and not revised:
-            segment = next(item for item in segments if "Smith 与 Novoid" in item["text"])
+            segment = next(item for item in segments if BAD_LOGIC in item["text"])
             result["findings"] = [
                 opinion(
                     "support_insufficient",

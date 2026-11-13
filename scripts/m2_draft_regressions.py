@@ -11,7 +11,7 @@ import traceback
 from datetime import datetime
 from pathlib import Path
 
-from m1_acceptance import Acceptance
+from m1_acceptance import Acceptance, submission_snapshot
 from playwright.sync_api import expect, sync_playwright
 
 
@@ -132,7 +132,9 @@ class DraftAcceptance(Acceptance):
         expect(page.locator(".task-context .tag")).to_have_text("已提交")
         page.screenshot(path=str(self.output / "draft-confirmed.png"), full_page=True)
         for role in "AC":
-            assert self.api(role, self.path + "/deliveries") == [delivery]
+            assert [
+                submission_snapshot(item) for item in self.api(role, self.path + "/deliveries")
+            ] == [submission_snapshot(delivery)]
             downloaded = self.pages[role].context.request.get(delivery["download_url"])
             assert downloaded.body() == content
         own = self.api("B", self.path + "/drafts")[0]

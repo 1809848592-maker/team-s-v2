@@ -13,6 +13,7 @@ import traceback
 from collections import Counter
 from datetime import datetime, timedelta
 from pathlib import Path
+from time import monotonic
 from typing import Any
 from urllib.parse import urlsplit
 from zipfile import ZipFile, is_zipfile
@@ -23,6 +24,15 @@ from playwright.sync_api import Error as PlaywrightError
 
 def write_json(path: Path, value: Any) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def submission_snapshot(delivery: dict[str, Any]) -> dict[str, Any]:
+    """Keep submission fields while the independently running review advances."""
+    return {
+        key: value
+        for key, value in delivery.items()
+        if key not in {"review_status", "review_progress"}
+    }
 
 
 class Acceptance:
@@ -494,6 +504,25 @@ class Acceptance:
         )
 
     def timelines_exports_and_screenshots(self) -> None:
+        # M3 adds background audit writes. Compare exports only after this run's
+        # jobs settle; queued/retrying work must not race the JSON/CSV snapshot.
+        deadline = monotonic() + 90
+        submitted_ids = {item["id"] for item in self.deliveries}
+        while True:
+            deliveries = self.api("B", self.path + "/deliveries")
+            progress = [
+                item.get("review_progress")
+                for item in deliveries
+                if item["id"] in submitted_ids
+            ]
+            assert len(progress) == len(submitted_ids)
+            if all(
+                item is None or item["status"] in {"succeeded", "failed", "paused"}
+                for item in progress
+            ):
+                break
+            assert monotonic() < deadline, "Background review jobs did not settle before export"
+            self.pages["B"].wait_for_timeout(500)
         page = self.tab("A", "时间线")
         events = self.api("A", self.path + "/events?limit=500")
         expected_actors = {
@@ -518,9 +547,19 @@ class Acceptance:
         assert counts["member_joined"] == 2 and counts["notification_read"] == 3
         names = {account["id"]: account["username"] for account in self.accounts.values()}
         for event in events:
-            assert event["project_id"] == self.project["id"] and event["actor_type"] == "human"
-            assert event["actor_id"] in names
+            assert event["project_id"] == self.project["id"]
+            assert event["represented_user_id"] is None
+            if event["actor_type"] == "human":
+                assert event["actor_id"] in names
+                actor_label = names[event["actor_id"]]
+            else:
+                assert event["actor_type"] == "agent"
+                assert event["actor_id"] == "platform-review-worker"
+                assert event["details"]["execution_origin"] == "platform_worker"
+                assert event["object_id"] in submitted_ids
+                actor_label = "平台审核后台"
             if event["event_type"] in expected_actors:
+                assert event["actor_type"] == "human"
                 assert (
                     event["actor_id"] == self.accounts[expected_actors[event["event_type"]]]["id"]
                 )
@@ -529,7 +568,7 @@ class Acceptance:
             )
             expect(row).to_have_count(1)
             expect(row.locator(".timeline-body > .toolbar > strong")).to_have_text(
-                names[event["actor_id"]]
+                actor_label
             )
         page.screenshot(path=str(self.output / "timeline-project.png"), full_page=True)
         for format_name in ("JSON", "CSV"):

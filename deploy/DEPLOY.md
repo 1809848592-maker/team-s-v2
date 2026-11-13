@@ -42,7 +42,7 @@ sudo docker version
 sudo docker compose version
 ```
 
-这些命令在服务器由运维人员执行；`docker` 权限相当于主机管理员权限。使用当前 Compose v2 插件；不用旧的 `docker-compose` v1。
+这些命令在服务器由运维人员执行；`docker` 权限相当于主机管理员权限。使用 Docker 官方维护的 Compose 插件（`docker compose`）；不用旧的 `docker-compose` v1。M4-06 全新 Ubuntu 验收安装的是 Docker 29.9.3、Compose v5.7.1，实际结果见 [M4_ACCEPTANCE.md](M4_ACCEPTANCE.md)。
 
 ## 3. 取得版本和配置密钥
 
