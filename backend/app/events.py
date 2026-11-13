@@ -7,10 +7,20 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from app.models import Event
+
+EventActorKind = Literal["human", "agent", "platform", "participant"]
+# Reserved identities are not user-created agents (whose IDs are UUIDs). Historical
+# append-only events can lack execution_origin; identify them without rewriting logs.
+PLATFORM_WORKER_ORIGINS = {
+    "platform-review-worker": "platform_worker",
+    "platform-project-linkage-worker": "platform_project_linkage",
+    "platform-plan-self-checker": "platform_plan_self_check",
+    "platform-spec-drafter": "platform_spec_draft",
+}
 
 EVENT_FIELDS = (
     "id",
@@ -70,6 +80,10 @@ def record_event(
     _check_metadata(metadata)
     # 校验 JSON 可序列化并复制，避免调用方之后修改同一字典影响待提交内容。
     metadata = json.loads(json.dumps(metadata, ensure_ascii=False))
+    if actor_type == "agent" and represented_user_id is None:
+        origin = PLATFORM_WORKER_ORIGINS.get(str(actor_id))
+        if origin is not None:
+            metadata.setdefault("execution_origin", origin)
     item = Event(
         occurred_at=datetime.now(UTC),
         project_id=project_id,
@@ -96,10 +110,24 @@ def list_events(
     task_id: UUID | None = None,
     object_id: str | None = None,
     actor_id: str | None = None,
+    actor_kind: EventActorKind | None = None,
     limit: int | None = 100,
     before_id: int | None = None,
 ) -> list[Event]:
     query = select(Event).where(Event.project_id == project_id)
+    platform_actor = and_(
+        Event.actor_type == "agent",
+        Event.actor_id.in_(PLATFORM_WORKER_ORIGINS),
+        Event.represented_user_id.is_(None),
+    )
+    if actor_kind == "platform":
+        query = query.where(platform_actor)
+    elif actor_kind == "participant":
+        query = query.where(~platform_actor)
+    elif actor_kind == "human":
+        query = query.where(Event.actor_type == "human")
+    elif actor_kind == "agent":
+        query = query.where(Event.actor_type == "agent", ~platform_actor)
     for column, value in (
         (Event.task_id, task_id),
         (Event.object_id, object_id),

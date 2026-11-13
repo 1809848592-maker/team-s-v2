@@ -12,7 +12,8 @@
     "preview": "vite preview --host 0.0.0.0",
     "test:linkage": "node tests/project-linkage.mjs",
     "test:plan-self-check": "node tests/plan-self-check.mjs",
-    "test:bottlenecks": "node tests/bottlenecks.mjs"
+    "test:bottlenecks": "node tests/bottlenecks.mjs",
+    "test:events": "node tests/events.mjs"
   },
   "dependencies": {
     "element-plus": "2.14.8",

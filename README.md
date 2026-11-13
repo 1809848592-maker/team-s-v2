@@ -23,7 +23,7 @@ docker compose down
 
 默认是本地开发配置：web 仅监听本机，PostgreSQL 不暴露宿主机端口，数据库为 `teams_dev`，数据保存在本项目的命名开发卷。示例密码仅用于本地开发。生产请使用独立的 [部署指南](deploy/DEPLOY.md)、`deploy/compose.production.yaml` 和 Caddy；指南包含 HTTPS、备份恢复、模型配置及数据条款查证。
 
-给老师或同学演示可运行 `python3 deploy/demo.py`：自动创建独立演示库和文件卷，打开 <http://127.0.0.1:18005>，使用 `demo-leader` / `demo-writer` / `demo-analyst`（共用密码 `TeamsDemo-Only-2026`）。预置审核为标明来源的固定响应，真实模型关闭；完整流程、隔离和停止方法见 [演示指南](deploy/DEMO.md)。
+给老师或同学演示可运行 `python3 deploy/demo.py`：自动创建独立演示库和文件卷，打开 <http://127.0.0.1:18005>，使用 `demo-leader` / `demo-writer` / `demo-analyst`（共用密码 `TeamsDemo-Only-2026`）。预置审核为标明来源的固定响应，真实模型关闭；需要恢复初始剧情时用 `python3 deploy/demo.py --reset` 并输入确认，只删除两个固定演示卷后重新生成。完整流程、隔离和停止方法见 [演示指南](deploy/DEMO.md)。
 
 ## 账号与会话
 

@@ -53,6 +53,7 @@ def project_events(
     task_id: UUID | None = None,
     object_id: Annotated[str | None, Query(max_length=256)] = None,
     actor_id: Annotated[str | None, Query(max_length=128)] = None,
+    actor_kind: events.EventActorKind | None = None,
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     before_id: Annotated[int | None, Query(ge=1)] = None,
 ) -> list[dict]:
@@ -66,6 +67,7 @@ def project_events(
             task_id=task_id,
             object_id=object_id,
             actor_id=actor_id,
+            actor_kind=actor_kind,
             limit=limit,
             before_id=before_id,
         )

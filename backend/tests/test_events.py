@@ -303,3 +303,139 @@ def test_record_event_participates_in_the_callers_transaction(auth_environment):
     with auth_environment.sessions() as db:
         assert db.get(Project, project_id) is None
         assert db.scalars(select(Event).where(Event.project_id == project_id)).all() == []
+
+
+PLATFORM_IDENTITIES = {
+    "platform-review-worker": "platform_worker",
+    "platform-project-linkage-worker": "platform_project_linkage",
+    "platform-plan-self-checker": "platform_plan_self_check",
+    "platform-spec-drafter": "platform_spec_draft",
+}
+
+
+@pytest.mark.parametrize("actor_id,origin", PLATFORM_IDENTITIES.items())
+def test_new_platform_events_record_origin_without_mutating_callers_details(
+    auth_environment, actor_id, origin
+):
+    details = {"summary": "固定替身报告"}
+    with auth_environment.sessions.begin() as db:
+        event = record_event(
+            db,
+            actor_type="agent",
+            actor_id=actor_id,
+            event_type="review_report_accepted",
+            object_type="delivery_version",
+            object_id=uuid4(),
+            details=details,
+        )
+        assert event.details["execution_origin"] == origin
+        assert event.represented_user_id is None
+        assert details == {"summary": "固定替身报告"}
+
+
+def test_actor_kind_filters_legacy_platform_events_before_pagination(auth_environment):
+    client = auth_environment.client
+    user_id = UUID(register(client).json()["id"])
+    project_id = UUID(create_project(client)["id"])
+    other_id = UUID(create_project(client, "另一项目")["id"])
+    module_id = uuid4()
+    with auth_environment.sessions.begin() as db:
+        agent = record_event(
+            db,
+            project_id=project_id,
+            actor_type="agent",
+            actor_id=uuid4(),
+            represented_user_id=user_id,
+            event_type="progress_reported",
+            object_type="task",
+            object_id=module_id,
+            task_id=module_id,
+            details={"agent_name": "platform-review-worker", "execution_origin": "platform_worker"},
+        )
+        user_event_id = agent.id
+        # Direct inserts reproduce immutable legacy records with missing origins.
+        workers = []
+        for index in range(108):
+            worker = Event(
+                project_id=project_id,
+                actor_type="agent",
+                actor_id=list(PLATFORM_IDENTITIES)[index % 4],
+                represented_user_id=None,
+                event_type="review_report_accepted",
+                object_type="delivery_version",
+                object_id=str(module_id),
+                task_id=module_id,
+                details={},
+            )
+            db.add(worker)
+            db.flush()
+            workers.append(worker.id)
+        record_event(
+            db,
+            project_id=other_id,
+            actor_type="agent",
+            actor_id="platform-review-worker",
+            event_type="review_report_accepted",
+            object_type="task",
+            object_id=module_id,
+        )
+    path = f"/api/projects/{project_id}/events"
+    full_before = client.get(path + "/export").json()
+    participant = client.get(path, params={"actor_kind": "participant", "limit": 6})
+    assert participant.status_code == 200
+    assert [row["id"] for row in participant.json()] == [full_before[0]["id"], user_event_id]
+    assert [row["id"] for row in client.get(path, params={"actor_kind": "agent"}).json()] == [
+        user_event_id
+    ]
+    assert [row["id"] for row in client.get(path, params={"actor_kind": "human"}).json()] == [
+        full_before[0]["id"]
+    ]
+    first = client.get(path, params={"actor_kind": "platform"}).json()
+    assert [row["id"] for row in first] == workers[-100:]
+    older = client.get(path, params={"actor_kind": "platform", "before_id": first[0]["id"]}).json()
+    assert [row["id"] for row in older] == workers[:8]
+    combined = client.get(
+        path,
+        params={
+            "actor_kind": "platform",
+            "task_id": str(module_id),
+            "object_id": str(module_id),
+            "actor_id": "platform-review-worker",
+        },
+    ).json()
+    assert [row["id"] for row in combined] == workers[::4]
+    assert client.get(path, params={"actor_kind": "platform", "task_id": str(uuid4())}).json() == []
+    assert client.get(path, params={"actor_kind": "unknown"}).status_code == 422
+    assert len(client.get(path).json()) == 100  # Full timeline keeps all actor kinds by default.
+    assert client.get(path + "/export").json() == full_before  # Never rewrites historical metadata.
+    assert all(row["details"] == {} for row in first + older)
+    outsider = auth_environment.make_client()
+    register(outsider, "outsider")
+    assert outsider.get(path, params={"actor_kind": "platform"}).status_code == 404
+
+
+@pytest.mark.parametrize("actor_type,represented", [("human", False), ("agent", True)])
+def test_reserved_name_alone_does_not_make_a_platform_event(
+    auth_environment, actor_type, represented
+):
+    client = auth_environment.client
+    user_id = UUID(register(client).json()["id"])
+    project_id = UUID(create_project(client)["id"])
+    with auth_environment.sessions.begin() as db:
+        item = record_event(
+            db,
+            project_id=project_id,
+            actor_type=actor_type,
+            actor_id="platform-review-worker",
+            represented_user_id=user_id if represented else None,
+            event_type="progress_reported",
+            object_type="task",
+            object_id=uuid4(),
+        )
+        event_id = item.id
+        assert "execution_origin" not in item.details
+    path = f"/api/projects/{project_id}/events"
+    assert client.get(path, params={"actor_kind": "platform"}).json() == []
+    assert event_id in [
+        row["id"] for row in client.get(path, params={"actor_kind": "participant"}).json()
+    ]
