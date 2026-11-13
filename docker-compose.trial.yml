@@ -1,0 +1,15 @@
+# Local real-paper trial only: always use -p teams-platform-dev with this override.
+# Keep the base/test/demo configuration offline; the key comes from platform/.env.
+name: teams-platform-dev
+
+x-trial: &trial
+  image: teams-platform:dev-trial
+  environment:
+    LLM_ENABLE_LIVE_CALLS: ${DEV_LLM_ENABLE_LIVE_CALLS:-false}
+    LLM_PROJECT_DAILY_REVIEWS: "10"
+
+services:
+  web:
+    <<: *trial
+  worker:
+    <<: *trial

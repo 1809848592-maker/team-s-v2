@@ -13,7 +13,7 @@ docker compose up --build -d --wait
 
 打开 <http://localhost:8000>。健康接口 <http://localhost:8000/api/health> 在 PostgreSQL 可用时返回 `{"status":"ok"}`，数据库不可用时返回 HTTP 503。
 
-web 启动时先执行 Alembic 迁移，数据库就绪后才启动；worker 等待 web 健康后启动，使用相同的后端镜像。worker 当前仅为进程骨架，后台任务执行将在 M3-02 实现。前端由同一个 web 服务提供，无需单独启动静态服务器。
+web 启动时先执行 Alembic 迁移，数据库就绪后才启动；worker 等待 web 健康后启动，使用相同的后端镜像执行审核任务。前端由同一个 web 服务提供，无需单独启动静态服务器。
 
 ```sh
 docker compose ps
@@ -25,13 +25,46 @@ docker compose down
 
 给老师或同学演示可运行 `python3 deploy/demo.py`：自动创建独立演示库和文件卷，打开 <http://127.0.0.1:18005>，使用 `demo-leader` / `demo-writer` / `demo-analyst`（共用密码 `TeamsDemo-Only-2026`）。预置审核为标明来源的固定响应，真实模型关闭；需要恢复初始剧情时用 `python3 deploy/demo.py --reset` 并输入确认，只删除两个固定演示卷后重新生成。完整流程、隔离和停止方法见 [演示指南](deploy/DEMO.md)。
 
+## 本机真实论文试用（仅 dev）
+
+在本目录的`.env`填写`DEEPSEEK_API_KEY`，不提交Git。使用专用覆盖文件`docker-compose.trial.yml`和镜像`teams-platform:dev-trial`；不修改基础配置、演示或验证环境。覆盖文件为每个项目设置每日10次，默认关闭真实调用，须显式开启。已有单独项目额度时，以管理员页保存的额度为准；本次开启时dev尚无项目或单独额度，之后创建的项目均默认10次。
+
+首次使用或更新代码时构建试用镜像（不会触发审核）：
+
+```sh
+env -u DEEPSEEK_API_KEY docker compose --env-file .env -p teams-platform-dev \
+  -f docker-compose.yml -f docker-compose.trial.yml build web
+```
+
+开启真实调用：
+
+```sh
+env -u DEEPSEEK_API_KEY DEV_LLM_ENABLE_LIVE_CALLS=true \
+  docker compose --env-file .env -p teams-platform-dev \
+  -f docker-compose.yml -f docker-compose.trial.yml \
+  up -d --no-deps --force-recreate --wait web worker
+```
+
+关闭真实调用（保留项目、文件和每日10次配置）：
+
+```sh
+env -u DEEPSEEK_API_KEY DEV_LLM_ENABLE_LIVE_CALLS=false \
+  docker compose --env-file .env -p teams-platform-dev \
+  -f docker-compose.yml -f docker-compose.trial.yml \
+  up -d --no-deps --force-recreate --wait web worker
+```
+
+`env -u`排除终端里同名Key覆盖，Key仅由显式指定的`platform/.env`提供；不要source该文件或输出完整Compose配置。开关变更必须重新创建web和worker，仅`docker compose restart`不会更新环境变量。以后继续操作此dev试用环境时使用上述两份Compose文件，避免误用旧的开发镜像；端口仍为<http://127.0.0.1:8000>。
+
+负责人仍需确认当前版数据外发告知，才会审核提交的真实论文。每日10次是审核额度，按UTC日重置；同一份交付里的多个审核员共用一次名额，重试沿用已预留名额，完整衔接审核、方案自检和辅助起草也计入项目额度。全平台每日200次/100万token上限继续生效，额度不足时暂停，不判通过。自动化验证继续使用独立库和模型替身。
+
 ## 账号与会话
 
 打开页面可注册、登录和退出。注册使用一个账号标识（用户名或邮箱，1–80 个字符）和密码（8–256 个字符），注册后自动登录。账号标识去除首尾空格、忽略大小写匹配；填写邮箱只作为账号标识，当前不包含邮箱验证或找回密码功能。
 
 密码使用 v1 相同的带独立盐的 scrypt 哈希。会话由服务器保存在 PostgreSQL，Cookie 为 `teams_v2_session`，包含随机令牌，库中仅保存其 SHA-256 哈希。每次成功登录都会更换当前浏览器的会话，退出会撤销该会话。会话默认 14 天，可通过 `SESSION_TTL_SECONDS` 设置；HTTPS 部署时设置 `SESSION_COOKIE_SECURE=true`。
 
-平台管理员通过 `PLATFORM_ADMIN_USER_IDS` 指定已注册账号的不可变 UUID，多个 ID 用逗号分隔。先注册、登录，从 `GET /api/auth/me` 的响应获取 `id`，写入 `.env` 后执行 `docker compose up -d --wait` 重新创建服务。使用 ID 可以避免预设管理员用户名被抢注。未配置时没有平台管理员，注册请求不能自行指定权限。用量及额度管理页面按计划在 M3 实现。
+平台管理员通过 `PLATFORM_ADMIN_USER_IDS` 指定已注册账号的不可变 UUID，多个 ID 用逗号分隔。先注册、登录，从 `GET /api/auth/me` 的响应获取 `id`，写入 `.env` 后重新创建web/worker（本机试用使用上文对应的开启/关闭命令）。使用 ID 可以避免预设管理员用户名被抢注。未配置时没有平台管理员，注册请求不能自行指定权限；配置后可在管理员用量页查看token、估算费用并调整各项目额度。
 
 账号 API：`POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me`。注册和登录接收 JSON `{"username":"...","password":"..."}`，返回 `id`、`username`、`is_admin`。未登录或会话过期访问 `/me` 返回 401；退出成功返回 204。人类会话通道的所有 POST 必须带 `X-CSRF-Protection: 1`；若请求有 Origin，则必须与服务同源，不开放跨域凭据请求。Vite 代理保留浏览器 Host，开发时使用相同校验。
 
