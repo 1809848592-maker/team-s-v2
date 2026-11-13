@@ -2,11 +2,20 @@
 # Keep the base/test/demo configuration offline; the key comes from platform/.env.
 name: teams-platform-dev
 
+# Applied by python3 deploy/trial.py; Compose alone cannot change Colima's Mac listener.
+x-dev-lan:
+  enabled: ${DEV_LAN_ENABLED:-false}
+  ip: ${DEV_LAN_IP:-}
+  colima_profile: ${DEV_COLIMA_PROFILE:-teams-m1}
+
 x-trial: &trial
   image: teams-platform:dev-trial
   environment:
     LLM_ENABLE_LIVE_CALLS: ${DEV_LLM_ENABLE_LIVE_CALLS:-false}
     LLM_PROJECT_DAILY_REVIEWS: "10"
+    # DEV_LAN_ENDPOINT is derived by the launcher only when the LAN switch is on.
+    MCP_ALLOWED_HOSTS: 127.0.0.1:*,localhost:*,[::1]:*${DEV_LAN_ENDPOINT:+,}${DEV_LAN_ENDPOINT:-}
+    MCP_ALLOWED_ORIGINS: http://127.0.0.1:*,http://localhost:*,http://[::1]:*${DEV_LAN_ENDPOINT:+,http://}${DEV_LAN_ENDPOINT:-}
 
 services:
   web:

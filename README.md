@@ -40,23 +40,54 @@ env -u DEEPSEEK_API_KEY docker compose --env-file .env -p teams-platform-dev \
 
 ```sh
 env -u DEEPSEEK_API_KEY DEV_LLM_ENABLE_LIVE_CALLS=true \
-  docker compose --env-file .env -p teams-platform-dev \
-  -f docker-compose.yml -f docker-compose.trial.yml \
-  up -d --no-deps --force-recreate --wait web worker
+  DEV_LAN_ENABLED=false python3 deploy/trial.py
 ```
 
 关闭真实调用（保留项目、文件和每日10次配置）：
 
 ```sh
 env -u DEEPSEEK_API_KEY DEV_LLM_ENABLE_LIVE_CALLS=false \
-  docker compose --env-file .env -p teams-platform-dev \
-  -f docker-compose.yml -f docker-compose.trial.yml \
-  up -d --no-deps --force-recreate --wait web worker
+  DEV_LAN_ENABLED=false python3 deploy/trial.py
 ```
 
-`env -u`排除终端里同名Key覆盖，Key仅由显式指定的`platform/.env`提供；不要source该文件或输出完整Compose配置。开关变更必须重新创建web和worker，仅`docker compose restart`不会更新环境变量。以后继续操作此dev试用环境时使用上述两份Compose文件，避免误用旧的开发镜像；端口仍为<http://127.0.0.1:8000>。
+`env -u`排除终端里同名Key覆盖，Key仅由显式指定的`platform/.env`提供；不要source该文件或输出完整Compose配置。启动器显式使用上述两份Compose文件、固定`teams-platform-dev`项目，只重建web/worker；端口仍为<http://127.0.0.1:8000>。仅`docker compose restart`不会更新环境变量。普通`docker compose`命令不能管理下述Mac局域网转发，试用开关统一使用`deploy/trial.py`。
 
 负责人仍需确认当前版数据外发告知，才会审核提交的真实论文。每日10次是审核额度，按UTC日重置；同一份交付里的多个审核员共用一次名额，重试沿用已预留名额，完整衔接审核、方案自检和辅助起草也计入项目额度。全平台每日200次/100万token上限继续生效，额度不足时暂停，不判通过。自动化验证继续使用独立库和模型替身。
+
+## 同一手机热点下的局域网试用（仅 dev）
+
+**仅限自己的热点、HTTP 明文、用完关闭。** Mac和同学电脑连接同一个由自己控制的手机热点，不在公共Wi-Fi上开启。HTTP会明文传输论文、密码和智能体令牌；此入口仅作临时试用，不代替生产HTTPS。
+
+Mac终端在`platform/`内先运行`source .tools/env.sh`，加载本机既有的Docker/Colima工具路径。在`networksetup -listallhardwareports`里找到Wi-Fi对应的设备名（通常`en0`），用以下命令查询IPv4；切换热点或IP变化后重新查询：
+
+```sh
+ipconfig getifaddr en0
+colima list
+```
+
+在`docker-compose.trial.yml`中，`DEV_LAN_ENABLED`默认`false`；`DEV_LAN_IP`必须是Mac当前的私有IPv4，`DEV_COLIMA_PROFILE`默认本机正在使用的`teams-m1`。其他Colima实例应填写`colima list`显示的实际名字。网页端口继续使用`.env`中的`WEB_PORT`（本机8000）。
+
+开启（同时保留真实模型调用和每日10次额度）：
+
+```sh
+DEV_LAN_ENABLED=true DEV_LAN_IP="$(ipconfig getifaddr en0)" \
+  DEV_COLIMA_PROFILE=teams-m1 DEV_LLM_ENABLE_LIVE_CALLS=true \
+  python3 deploy/trial.py
+```
+
+成功后脚本打印`http://局域网IP:8000`，同学用这个地址打开网页、注册或登录；智能体连接`http://局域网IP:8000/mcp`并携带本人登记的Bearer令牌。在该地址打开“我的智能体”时，复制配置使用的也是当前局域网地址。MCP的Host和Origin白名单只增加这一个准确IP及端口，保留本机回环地址；不使用局域网通配符。
+
+Colima默认只在Mac的`127.0.0.1`转发端口，因此仅修改容器端口不能开放局域网。启动器保持Docker的回环绑定，另建一个只绑定指定Mac IP/端口的OpenSSH转发，转到同一Colima实例的dev端口；不修改Colima全局设置，不开放其他端口。转发使用`.tools/dev-lan/`下独立控制socket；关闭只退出这个转发，不停止Colima及其共享SSH连接。
+
+若macOS询问是否允许`ssh`（或相关终端程序）接受传入网络连接，在自己的热点上选择“允许”。若曾拒绝，到“系统设置 → 网络 → 防火墙 → 选项”允许对应程序的传入连接；不要关闭整个防火墙。如果Mac自己能打开该IP而同学仍不能访问，确认热点没有隔离客户端、IP未变化，且双方没有用VPN改变路由。本次测试不自动改变系统防火墙。
+
+关闭局域网，保持Mac本机真实模型试用：
+
+```sh
+DEV_LAN_ENABLED=false DEV_LLM_ENABLE_LIVE_CALLS=true python3 deploy/trial.py
+```
+
+此命令先退出专属Mac监听，再读取Compose配置、重建dev web/worker移除局域网MCP白名单；即使Compose配置有误，也先关闭现有转发。此后局域网IP应连接失败，本机<http://127.0.0.1:8000>仍可使用。若也要关闭真实模型，将同一命令里的`DEV_LLM_ENABLE_LIVE_CALLS`改成`false`。IP变化或命令中途失败时先执行关闭，再用新的IP开启；不要仅依靠`docker compose down/restart`关闭宿主转发。
 
 ## 账号与会话
 
